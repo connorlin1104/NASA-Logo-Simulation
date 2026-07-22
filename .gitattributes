@@ -1,0 +1,34 @@
+# Normalize line endings for text files
+* text=auto eol=lf
+
+# C#
+*.cs text diff=csharp
+
+# Unity YAML text assets — use Unity's smart merge tool (configure once with UnityYAMLMerge)
+*.unity          merge=unityyamlmerge eol=lf
+*.prefab         merge=unityyamlmerge eol=lf
+*.asset          merge=unityyamlmerge eol=lf
+*.mat            merge=unityyamlmerge eol=lf
+*.anim           merge=unityyamlmerge eol=lf
+*.controller     merge=unityyamlmerge eol=lf
+*.meta           merge=unityyamlmerge eol=lf
+*.physicMaterial merge=unityyamlmerge eol=lf
+
+# Binary assets — never try to diff/merge (add Git LFS later for heavy models/textures)
+*.fbx  binary
+*.FBX  binary
+*.blend binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.tga  binary
+*.psd  binary
+*.wav  binary
+*.mp3  binary
+*.ogg  binary
+*.ttf  binary
+*.otf  binary
+*.dll  binary
+*.a    binary
+*.unitypackage binary
