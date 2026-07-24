@@ -46,21 +46,61 @@ The scene already works with primitive stand-ins, so you can swap models in one 
 - [ ] **Press Play.** The tractor should drive the logo, wheels turning.
 - [ ] If it drives **backwards** → **Tools ▸ NASA Sim ▸ Tractor ▸ Rotate Model 90 (fix facing)**, repeat
       until the nose leads.
-- [ ] If the wheels **spin on the wrong axis** → select **Tractor** in the Hierarchy → **Tractor Path
-      Follower** → **Wheel Spin Axis**. This is the axle picker:
+### Wheels — the **Wheels (visual)** list
 
-      | Setting | What it does |
-      |---|---|
-      | **Auto Longest Side** *(default)* | Uses each wheel mesh's **longest** bounding-box side as the axle |
-      | **Auto Shortest Side** | Uses the **shortest** side — correct for a normal disc-shaped wheel, where the thin direction is the axle and the long sides are the diameter |
-      | **X / Y / Z** | Forces one fixed local axis for every wheel |
-      | **Custom** | Type an exact axle vector into **Custom Wheel Spin Axis** |
+Select **Tractor** in the Hierarchy → **Tractor Path Follower ▸ Wheels**. It holds **up to 4** wheels,
+and each entry has two slots:
 
-      Try **Auto Shortest Side** first if Auto Longest spins them wrong — it's the physically usual case.
-      The rolling radius is derived automatically as half the wheel's largest dimension *perpendicular* to
-      whichever axle you pick, so the spin rate stays right.
-- [ ] If the wheels **don't spin at all** → they weren't detected. Assign them by hand: **Tractor Path
-      Follower → Drive Wheels**, or put `wheel` in each wheel object's name and re-run the swap.
+| Slot | What to put in it |
+|---|---|
+| **Mesh** | The wheel's visual mesh object |
+| **Axle** | The transform this wheel **pivots around**. If it's a mesh part, the wheel spins about the **centre of that axle geometry** (not its transform origin, which is often back at the model origin); if it's a plain empty, about the empty's position. Leave the slot empty to spin the mesh about its own pivot. |
+| **Axle Axis** | Which of the Axle's own local axes runs **along** the axle: **Z** = blue arrow *(default)*, **X** = red, **Y** = green |
+| **Spin Multiplier** | Fine-tunes just this wheel's speed. `1` = true rolling, `-1` reverses it. |
+
+**Spin too fast / too slow?** `Tractor Path Follower ▸ Wheel Spin Multiplier` scales **all** wheels
+(`1` = true rolling, negative reverses), and each wheel's own **Spin Multiplier** trims it further. Both
+can be dragged **live while playing**, so you can dial it in without stopping.
+
+**Wrong axis? Don't re-orient anything.** Just change **Axle Axis** and watch the cyan gizmo line snap
+round — it's a 90° flip between X and Z. Each wheel is set independently.
+
+Every entry is fully independent: its own pivot, its own orientation, its own size (each wheel's rolling
+radius is measured from its own mesh, so a small front wheel spins faster than a big rear one). It's
+**purely cosmetic** — the wheels follow the tractor because they're parented to it; nothing here changes
+the path driven or the line mowed.
+
+**Already made your own axles? Don't re-run the swap** (it would rebuild the model and lose your work).
+Instead: select your wheels in the **Hierarchy** — either each wheel's **axle/group** object or the mesh
+itself — and run **Tools ▸ NASA Sim ▸ Tractor ▸ Populate Wheels From Selection**. It only fills in the
+list: nothing is deleted, re-imported or moved. Selecting the group is preferred — the mesh inside it is
+found automatically and the group becomes that wheel's pivot.
+
+*(On a fresh import, `Swap In Selected FBX` instead creates an `Axle_<wheel>` empty at each measured hub
+and assigns it for you.)*
+
+### Checking it in the Scene view
+
+Each wheel draws its **actual axis of rotation** in the Scene view (never in the Game view or a build) —
+toggle with `Tractor Path Follower ▸ Show Wheel Gizmos`:
+
+| Gizmo | Meaning | If it looks wrong |
+|---|---|---|
+| **Cyan line** | The axis of rotation, through the pivot | Should run along the axle, left-to-right through the wheel. If it's 90° out, switch **Axle Axis** (Z ↔ X). |
+| **Red dot** | The exact pivot point — the centre of the axle component | Must sit at the wheel's hub, or the wheel swings in an arc instead of spinning on the spot |
+| **Yellow circle** | The rolling circle at the measured radius | Should land on the rim. If it's much bigger/smaller, the spin *rate* will be off. Orange = the mesh couldn't be measured. |
+| **White spoke** | Turns as the wheel spins | Watch it in Play mode to confirm the wheel rolls the right way |
+
+Then:
+
+- [ ] Wheel **spins on the wrong axis** → change that wheel's **Axle Axis** (Z ↔ X is the usual 90° flip)
+      until the cyan line runs along the axle. Only that wheel is affected.
+- [ ] Wheel **swings in an arc instead of spinning in place** → its `Axle_*` isn't at the hub. Move the
+      `Axle_*` object to the centre of that wheel. (This is the usual symptom when an exported mesh's
+      pivot sits at the model origin rather than the hub.)
+- [ ] Wheels **don't spin at all** → they weren't detected. Fill in **Wheels** by hand, or put `wheel` in
+      each wheel object's name and re-run the swap.
+- [ ] More than 4 wheels? The list caps at 4; the swap logs exactly which were wired and which weren't.
 
 > The mower, path, camera, and the whole mowing sim are untouched by the swap — only the tractor's look
 > changes.
@@ -217,8 +257,9 @@ keep it small and repeat it rather than exporting one giant field mesh.
 | Model is grey / pink | Textures not embedded → re-export with **Embed Media ON**, or add the `.fbm` folder / Extract Materials |
 | Astronaut or biodome is giant/tiny | Maya cm vs Unity m → astronaut auto-scales; for the biodome set **Scale Factor** on import |
 | Tractor / astronaut moves backwards | **Rotate Model 90 (fix facing)**, repeat as needed |
-| Tractor wheels spin on the wrong axis | Set **Tractor Path Follower ▸ Wheel Spin Axis** (try *Auto Shortest Side*, or pick X/Y/Z directly) |
-| Tractor wheels don't spin at all | Not detected → assign **Drive Wheels** by hand, or name them `wheel*` and re-run the swap |
+| A wheel spins on the wrong axis | Rotate that wheel's **`Axle_*`** object so its X (red) arrow runs along the axle |
+| A wheel swings in an arc instead of spinning | Its **`Axle_*`** isn't at the hub → move it to the wheel's centre |
+| Tractor wheels don't spin at all | Not detected → fill in **Tractor Path Follower ▸ Wheels**, or name them `wheel*` and re-run the swap |
 | Arms don't swing | Rig must be **Humanoid** → run **Astronaut ▸ Validate Selected FBX** to see which bones are missing |
 | Falls through the biodome floor | Floor mesh needs a `COL_` prefix → re-run **Biodome ▸ Wire Up** |
 | Walks straight through the dome into space | You wanted it solid → prefix it `COL_` instead of `NOCOL_` |

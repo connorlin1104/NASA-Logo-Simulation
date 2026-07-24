@@ -105,12 +105,20 @@ namespace NasaSim.EditorTools
             SetSerialized(mowerController, "visualBehaviour", trailVisual);
 
             var follower = tractor.AddComponent<TractorPathFollower>();
-            follower.driveWheels = driveWheels;
+            // Each stand-in wheel already has its pivot at its own hub, so no separate axle object is
+            // needed: leaving Axle empty spins the mesh in place about its own local X (the thin, 0.25
+            // axis of these flattened cubes). A real FBX wheel usually does need an axle - see the
+            // tractor swap tool, which creates one at each measured hub.
+            var wheelVisuals = new TractorPathFollower.WheelVisual[driveWheels.Length];
+            for (int i = 0; i < driveWheels.Length; i++)
+                wheelVisuals[i] = new TractorPathFollower.WheelVisual
+                {
+                    mesh = driveWheels[i],
+                    axle = null,
+                    axleAxis = TractorPathFollower.AxleAxis.X,   // the thin, 0.25 axis of these cubes
+                };
+            follower.wheels = wheelVisuals;
             follower.steerWheels = new Transform[0];   // front-steer left to the real FBX later
-            // These stand-in wheels are flattened cubes (0.25 x 0.8 x 0.8): the axle is the SHORTEST side,
-            // so pin the axis explicitly rather than relying on the auto-longest default.
-            follower.wheelSpinAxis = TractorPathFollower.WheelSpinAxis.X;
-            follower.wheelRadius = 0.4f;
             follower.mower = mowerController;
             follower.mowerAnchor = mowerAnchor.transform;
             follower.fixedY = 0.9f;

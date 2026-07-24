@@ -134,14 +134,45 @@ namespace NasaSim.EditorTools
             }
 
             // ---- Wheels ----
+            // Build one visual entry per wheel, each with its OWN axle. An exported wheel mesh often has
+            // its pivot at the model origin rather than at the hub, which makes it swing in an arc instead
+            // of spinning; so an empty is created at each wheel's measured hub centre and used as that
+            // wheel's pivot. It is parented alongside the wheel so it follows any later rescale.
             var found = FindWheels(instance.transform);
-            follower.driveWheels = found.ToArray();
-            follower.steerWheels = new Transform[0];   // front-steer left to a manual pass if wanted
-            if (found.Count > 0 && TryGetRendererBounds(found[0].gameObject, out Bounds wb))
+            int used = Mathf.Min(found.Count, TractorPathFollower.MaxWheels);
+            var visuals = new TractorPathFollower.WheelVisual[used];
+
+            for (int i = 0; i < used; i++)
             {
-                float radius = Mathf.Max(wb.size.x, Mathf.Max(wb.size.y, wb.size.z)) * 0.5f;
-                if (radius > 1e-4f) follower.wheelRadius = radius;
+                Transform wheel = found[i];
+                Transform axle = null;
+
+                if (TryGetRendererBounds(wheel.gameObject, out Bounds wb))
+                {
+                    var axleGo = new GameObject($"Axle_{wheel.name}");
+                    axle = axleGo.transform;
+                    axle.SetParent(wheel.parent != null ? wheel.parent : root, worldPositionStays: true);
+                    // Hub centre, oriented to the tractor so the axle's local X runs left-right.
+                    axle.SetPositionAndRotation(wb.center, root.rotation);
+                }
+
+                visuals[i] = new TractorPathFollower.WheelVisual
+                {
+                    mesh = wheel,
+                    axle = axle,
+                    // These axles are built X-along-the-axle; hand-made ones default to Z.
+                    axleAxis = TractorPathFollower.AxleAxis.X,
+                };
             }
+
+            follower.wheels = visuals;
+            follower.steerWheels = new Transform[0];   // front-steer left to a manual pass if wanted
+
+            if (found.Count > used)
+                Debug.LogWarning($"[ModelImportTools] Found {found.Count} wheels but the visual list holds " +
+                                 $"{TractorPathFollower.MaxWheels}. Wired: " +
+                                 $"{string.Join(", ", found.Take(used).Select(w => w.name))}. NOT wired: " +
+                                 $"{string.Join(", ", found.Skip(used).Select(w => w.name))}.", root);
 
             // Model geometry is visual-only for M1 (kinematic path following); strip any colliders it brought.
             foreach (var col in instance.GetComponentsInChildren<Collider>(true))
@@ -151,11 +182,103 @@ namespace NasaSim.EditorTools
             Selection.activeGameObject = root.gameObject;
 
             Debug.Log($"[ModelImportTools] Swapped in tractor '{model.name}'. " +
-                      (found.Count > 0
-                          ? $"{found.Count} wheel(s) wired, radius {follower.wheelRadius:0.###}. Press Play."
-                          : "NO wheels wired - they will not spin. Run 'Validate Selected FBX' or assign Drive " +
-                            "Wheels by hand on Tractor > Tractor Path Follower.") +
+                      (used > 0
+                          ? $"{used} wheel(s) wired, each with an Axle_* pivot created at its hub. Press Play; " +
+                            "if a wheel spins on the wrong axis, rotate its Axle_* object so its X (red) " +
+                            "arrow points along the axle."
+                          : "NO wheels wired - they will not spin. Run 'Validate Selected FBX', or fill in " +
+                            "Tractor > Tractor Path Follower > Wheels by hand.") +
                       " If it drives backwards, use Tractor > Rotate Model 90.", root);
+        }
+
+        /// <summary>
+        /// Fill in the follower's Wheels list from what is already in the scene - no rebuild, nothing
+        /// deleted, no model re-imported. Select the wheels in the Hierarchy (either each wheel's
+        /// axle/group object, or the wheel mesh itself) and run this.
+        /// </summary>
+        [MenuItem("Tools/NASA Sim/Tractor/Populate Wheels From Selection")]
+        public static void PopulateWheelsFromSelection()
+        {
+            var follower = Object.FindAnyObjectByType<TractorPathFollower>();
+            if (follower == null)
+            {
+                EditorUtility.DisplayDialog("No tractor in scene",
+                    "This scene has no Tractor Path Follower to fill in.", "OK");
+                return;
+            }
+
+            var sel = Selection.transforms;
+            if (sel == null || sel.Length == 0)
+            {
+                EditorUtility.DisplayDialog("Select your wheels",
+                    $"In the HIERARCHY select up to {TractorPathFollower.MaxWheels} wheels - either each " +
+                    "wheel's axle/group object, or the wheel mesh itself - then run this again.\n\n" +
+                    "Selecting the axle/group is preferred: the mesh under it is found automatically and " +
+                    "the group becomes that wheel's pivot.", "OK");
+                return;
+            }
+
+            int used = Mathf.Min(sel.Length, TractorPathFollower.MaxWheels);
+            var list = new List<TractorPathFollower.WheelVisual>();
+            var log = new StringBuilder();
+
+            for (int i = 0; i < used; i++)
+            {
+                Transform t = sel[i];
+                Transform mesh, axle = null;
+
+                if (t.GetComponent<Renderer>() != null)
+                {
+                    // A mesh was selected. A renderer-less parent is almost certainly the axle/group.
+                    mesh = t;
+                    if (t.parent != null && t.parent != follower.transform &&
+                        t.parent.GetComponent<Renderer>() == null)
+                        axle = t.parent;
+                }
+                else
+                {
+                    // A group/axle was selected: use it as the pivot, and find the wheel mesh beneath it.
+                    axle = t;
+                    mesh = LargestRendererUnder(t);
+                }
+
+                if (mesh == null)
+                {
+                    log.AppendLine($"  '{t.name}' - no mesh found under it, SKIPPED");
+                    continue;
+                }
+
+                list.Add(new TractorPathFollower.WheelVisual { mesh = mesh, axle = axle });
+                log.AppendLine($"  mesh '{mesh.name}'   axle '{(axle != null ? axle.name : "(none - own pivot)")}'");
+            }
+
+            Undo.RecordObject(follower, "Populate Wheels");
+            follower.wheels = list.ToArray();
+            EditorUtility.SetDirty(follower);
+            EditorSceneManager.MarkSceneDirty(follower.gameObject.scene);
+            Selection.activeGameObject = follower.gameObject;
+
+            if (sel.Length > used)
+                log.AppendLine($"  NOTE: {sel.Length - used} extra selected object(s) ignored " +
+                               $"(the list holds {TractorPathFollower.MaxWheels}).");
+
+            Debug.Log($"[ModelImportTools] Wheels wired ({list.Count}):\n{log}" +
+                      "Check the Scene view: cyan line = axis of rotation, red dot = pivot, yellow circle " +
+                      "= rolling radius.", follower);
+        }
+
+        /// <summary>The biggest renderer at or under this transform - the wheel mesh inside a group.</summary>
+        static Transform LargestRendererUnder(Transform root)
+        {
+            Transform best = null;
+            float bestSize = -1f;
+            foreach (var r in root.GetComponentsInChildren<Renderer>(true))
+            {
+                if (r is ParticleSystemRenderer || r is TrailRenderer || r is LineRenderer) continue;
+                float s = r.bounds.size.sqrMagnitude;
+                if (s > bestSize) { bestSize = s; best = r.transform; }
+            }
+            return best;
         }
 
         [MenuItem("Tools/NASA Sim/Tractor/Rotate Model 90 (fix facing)")]

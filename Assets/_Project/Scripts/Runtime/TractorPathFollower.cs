@@ -16,16 +16,41 @@ namespace NasaSim
     {
         public enum EndBehavior { Stop, Loop, PingPong }
 
-        /// <summary>Which of a wheel's own LOCAL axes is the axle it rolls about.</summary>
-        public enum WheelSpinAxis
+        /// <summary>How many wheels the visual list accepts.</summary>
+        public const int MaxWheels = 4;
+
+        /// <summary>Which of the axle transform's own local axes runs along the axle.</summary>
+        public enum AxleAxis { X, Y, Z }
+
+        /// <summary>
+        /// One purely-visual wheel: a mesh, and the transform it pivots about. Entries are completely
+        /// independent of one another - different pivots, orientations and sizes are all fine.
+        /// </summary>
+        [System.Serializable]
+        public class WheelVisual
         {
-            /// <summary>The wheel mesh's longest bounding-box side.</summary>
-            AutoLongestSide,
-            /// <summary>The wheel mesh's shortest bounding-box side (a disc wheel's axle is usually this).</summary>
-            AutoShortestSide,
-            X, Y, Z,
-            /// <summary>The explicit vector in <see cref="customWheelSpinAxis"/>.</summary>
-            Custom,
+            [Tooltip("The wheel's visual mesh. Rolled in place; it never drives the tractor.")]
+            public Transform mesh;
+
+            [Tooltip("This wheel's pivot: the mesh spins around THIS transform's position.\n\n" +
+                     "Use it when the mesh's own pivot is not at the hub (very common in exported FBX) - " +
+                     "put an empty at the hub centre and drop it here, and the wheel spins on the spot " +
+                     "instead of swinging in an arc.\n\n" +
+                     "Leave empty to spin the mesh about its own pivot.")]
+            public Transform axle;
+
+            [Tooltip("Which of the Axle's own local axes points ALONG the axle (the direction a real axle " +
+                     "rod would run, left-to-right through the wheel).\n\n" +
+                     "Z = the blue arrow (default), X = red, Y = green. Watch the cyan gizmo line in the " +
+                     "Scene view and pick whichever makes it run along the axle - no need to re-orient " +
+                     "anything you have already built. Each wheel is set independently.")]
+            public AxleAxis axleAxis = AxleAxis.Z;
+
+            [Tooltip("Fine-tune JUST this wheel's spin rate.\n\n" +
+                     "1 = true rolling speed for its measured radius. Raise it if the wheel looks like " +
+                     "it's dragging, lower it if it spins too fast, and use -1 to reverse the direction. " +
+                     "Multiplies with Wheel Spin Multiplier on the component. Adjustable live in Play mode.")]
+            public float spinMultiplier = 1f;
         }
 
         [Header("Path source")]
@@ -44,21 +69,22 @@ namespace NasaSim
         public bool autoStart = true;
 
         [Header("Wheels (visual)")]
-        [Tooltip("Wheels rolled about the axle chosen by Wheel Spin Axis below.")]
-        public Transform[] driveWheels;
-        [Tooltip("Which of each wheel's LOCAL axes is the axle it spins about.\n" +
-                 "• Auto Longest / Shortest Side — measured per wheel from its own mesh bounding box, so " +
-                 "wheels mounted at different orientations each get the right axle.\n" +
-                 "• X / Y / Z — one fixed local axis for every wheel.\n" +
-                 "• Custom — the vector below.\n" +
-                 "NOTE: a disc-shaped wheel's axle is normally its SHORTEST side (the thin direction); the " +
-                 "longest sides are the diameter. If Auto Longest spins them wrong, try Auto Shortest.")]
-        public WheelSpinAxis wheelSpinAxis = WheelSpinAxis.AutoLongestSide;
-        [Tooltip("Used only when Wheel Spin Axis = Custom. The axle direction in the wheel's LOCAL space.")]
-        public Vector3 customWheelSpinAxis = Vector3.right;
-        [Tooltip("Auto-derived when Auto Wheel Radius is on: half the wheel's largest dimension PERPENDICULAR " +
-                 "to the axle (i.e. the true rolling radius).")]
-        [Min(0.001f)] public float wheelRadius = 0.4f;
+        [Tooltip("Up to 4 wheels, each with its own mesh and its own pivot/axle. Entries are independent: " +
+                 "each wheel spins about its own axle at its own rate, derived from its own size.\n\n" +
+                 "This is PURELY COSMETIC - the wheels follow the tractor because they are parented to it. " +
+                 "Nothing here affects the path the tractor drives or the line it mows.")]
+        public WheelVisual[] wheels = new WheelVisual[0];
+        [Tooltip("Overall wheel spin speed, scaling EVERY wheel. 1 = true rolling speed (a wheel turns " +
+                 "exactly once per circumference travelled). Raise or lower it to taste; negative reverses " +
+                 "them all. Each wheel can be trimmed further with its own Spin Multiplier. Adjustable " +
+                 "live while playing.")]
+        public float wheelSpinMultiplier = 1f;
+        [Tooltip("Scene-view only: draw each wheel's axis of rotation (cyan line through the pivot), its " +
+                 "rolling circle (yellow) and a spoke that turns as the wheel spins. Never appears in the " +
+                 "Game view or a build.")]
+        public bool showWheelGizmos = true;
+
+        [Header("Steering (visual)")]
         [Tooltip("Optional front wheels that visually yaw toward the turn direction.")]
         public Transform[] steerWheels;
         public float maxSteerAngleDeg = 28f;
@@ -77,9 +103,6 @@ namespace NasaSim
         public Transform visualRoot;
         [Tooltip("Re-seat the model on the ground at the start of each run (safe to leave on).")]
         public bool autoGroundModel = true;
-        [Tooltip("Recompute wheel radius from the wheel size each run, so wheels spin at the right rate " +
-                 "after a rescale. Turn off if you set Wheel Radius by hand.")]
-        public bool autoWheelRadius = true;
 
         [Header("Events")]
         public UnityEvent onStarted;
@@ -87,7 +110,20 @@ namespace NasaSim
         public WaypointEvent onWaypointReached;
         public PenEvent onPenStateChanged;
 
-        Vector3[] _wheelAxes;   // resolved per-wheel local axle, see ResolveWheels()
+        /// <summary>Per-wheel state bound at the start of a run. See <see cref="ResolveWheels"/>.</summary>
+        struct WheelRuntime
+        {
+            public Transform mesh;
+            public Transform axle;        // null => spin the mesh about its own pivot
+            public Vector3 localAxis;     // spin axis, in the pivot transform's LOCAL space
+            public Vector3 pivotLocal;    // the rotation centre (axle geometry centre), in axle local space
+            public Vector3 restPos;       // mesh offset FROM that centre, in axle local space, at bind time
+            public Quaternion restRot;    // mesh rotation, relative to the axle, at bind time
+            public float radius;          // this wheel's own rolling radius
+            public float angle;           // accumulated spin, degrees
+        }
+
+        WheelRuntime[] _wheels;
         WaypointPath _path;
         int _index;      // waypoint we are driving toward
         int _dir = 1;    // +1 forward, -1 reverse (ping-pong)
@@ -151,28 +187,92 @@ namespace NasaSim
         }
 
         /// <summary>
-        /// Work out, per wheel, which of its LOCAL axes is the axle, and the true rolling radius. Measured
-        /// from each wheel's own mesh bounding box (scaled by its transform), so it is independent of how
-        /// the wheel is oriented in the world and survives rescaling the tractor.
+        /// Bind each visual wheel to its axle: remember where the mesh sits relative to that axle, and
+        /// measure that wheel's own rolling radius. Re-run at the start of every run, so moving an axle or
+        /// rescaling the tractor is picked up automatically.
+        ///
+        /// The rest pose is stored RELATIVE TO THE AXLE and the spin is re-applied from it every frame
+        /// (rather than accumulating Rotate/RotateAround calls), so an offset pivot can never drift.
         /// </summary>
         void ResolveWheels()
         {
-            if (driveWheels == null) { _wheelAxes = null; return; }
-            if (_wheelAxes == null || _wheelAxes.Length != driveWheels.Length)
-                _wheelAxes = new Vector3[driveWheels.Length];
+            int count = wheels != null ? Mathf.Min(wheels.Length, MaxWheels) : 0;
+            if (_wheels == null || _wheels.Length != count) _wheels = new WheelRuntime[count];
 
-            float radius = 0f;
-            for (int i = 0; i < driveWheels.Length; i++)
+            for (int i = 0; i < count; i++)
             {
-                var w = driveWheels[i];
-                if (w == null) { _wheelAxes[i] = Vector3.right; continue; }
+                var w = wheels[i];
+                var rt = new WheelRuntime();
+                if (w == null || w.mesh == null) { _wheels[i] = rt; continue; }
 
-                Vector3 size = LocalWheelSize(w);
-                Vector3 axis = ResolveSpinAxis(size);
-                _wheelAxes[i] = axis;
-                radius = Mathf.Max(radius, HalfPerpendicularExtent(size, axis));
+                rt.mesh = w.mesh;
+                rt.axle = w.axle;
+                rt.localAxis = LocalAxisOf(w.axleAxis);
+
+                TryGetWheelAxis(w, out Vector3 pivotWorld, out _, out rt.radius, out bool measured);
+                if (!measured)
+                    Debug.LogWarning($"[TractorPathFollower] Wheel '{rt.mesh.name}' has no measurable mesh; " +
+                                     "using a 0.4 rolling radius. Assign the wheel's mesh object, not an " +
+                                     "empty parent.", rt.mesh);
+
+                if (rt.axle != null)
+                {
+                    // Everything is stored in the axle's local space, so it rides along with the tractor.
+                    // restPos is the mesh's offset FROM the rotation centre, which is what gets swung.
+                    rt.pivotLocal = rt.axle.InverseTransformPoint(pivotWorld);
+                    rt.restPos = rt.axle.InverseTransformPoint(rt.mesh.position) - rt.pivotLocal;
+                    rt.restRot = Quaternion.Inverse(rt.axle.rotation) * rt.mesh.rotation;
+                }
+                else
+                {
+                    rt.restRot = rt.mesh.localRotation;   // spun about its own local X, in place
+                }
+
+                _wheels[i] = rt;
             }
-            if (autoWheelRadius && radius > 1e-4f) wheelRadius = radius;
+        }
+
+        void OnValidate()
+        {
+            // The inspector list is capped at MaxWheels.
+            if (wheels != null && wheels.Length > MaxWheels)
+                System.Array.Resize(ref wheels, MaxWheels);
+        }
+
+        /// <summary>
+        /// Where a wheel pivots, which way its axis of rotation points, and how big it rolls. Shared by the
+        /// runtime bind and the Scene-view gizmos, so what you see drawn is exactly what will spin.
+        /// Safe to call in edit mode.
+        /// </summary>
+        public bool TryGetWheelAxis(WheelVisual w, out Vector3 pivot, out Vector3 axisWorld,
+                                    out float radius, out bool measured)
+        {
+            pivot = Vector3.zero;
+            axisWorld = Vector3.right;
+            radius = 0.4f;
+            measured = false;
+            if (w == null || w.mesh == null) return false;
+
+            // The axle is the pivot. When it is a real mesh part, rotate about the CENTRE of that geometry
+            // rather than its transform origin, which often sits back at the model origin.
+            Transform pivotT = w.axle != null ? w.axle : w.mesh;
+            pivot = w.axle != null ? AxlePivotPoint(w.axle, w.mesh) : w.mesh.position;
+
+            Vector3 a = w.axleAxis switch
+            {
+                AxleAxis.X => pivotT.right,
+                AxleAxis.Y => pivotT.up,
+                _          => pivotT.forward,
+            };
+            axisWorld = a.sqrMagnitude < 1e-8f ? Vector3.right : a.normalized;
+
+            // Rolling radius: half the wheel's largest extent PERPENDICULAR to its axle, measured in the
+            // mesh's own local space so it is independent of world orientation.
+            Vector3 size = LocalWheelSize(w.mesh);
+            Vector3 axisInMesh = w.mesh.InverseTransformDirection(axisWorld);
+            float r = HalfPerpendicularExtent(size, axisInMesh);
+            if (r > 1e-4f) { radius = r; measured = true; }
+            return true;
         }
 
         /// <summary>Wheel dimensions along its OWN local axes, in world units (mesh bounds x transform scale).</summary>
@@ -190,30 +290,37 @@ namespace NasaSim
             return new Vector3(Mathf.Abs(s.x * sc.x), Mathf.Abs(s.y * sc.y), Mathf.Abs(s.z * sc.z));
         }
 
-        Vector3 ResolveSpinAxis(Vector3 size)
+        /// <summary>
+        /// The centre of the axle component itself: its own renderer bounds when it is a mesh part,
+        /// otherwise the combined bounds of its children (excluding the wheel mesh grouped under it), and
+        /// finally its transform position when it is a plain empty.
+        /// </summary>
+        static Vector3 AxlePivotPoint(Transform axle, Transform wheelMesh)
         {
-            switch (wheelSpinAxis)
+            var own = axle.GetComponent<Renderer>();
+            if (IsMeshRenderer(own)) return own.bounds.center;
+
+            bool any = false;
+            Bounds b = default;
+            foreach (var r in axle.GetComponentsInChildren<Renderer>(true))
             {
-                case WheelSpinAxis.X: return Vector3.right;
-                case WheelSpinAxis.Y: return Vector3.up;
-                case WheelSpinAxis.Z: return Vector3.forward;
-                case WheelSpinAxis.Custom:
-                    return customWheelSpinAxis.sqrMagnitude > 1e-6f
-                        ? customWheelSpinAxis.normalized
-                        : Vector3.right;
-                case WheelSpinAxis.AutoShortestSide: return CardinalOfExtent(size, longest: false);
-                default:                             return CardinalOfExtent(size, longest: true);
+                if (!IsMeshRenderer(r)) continue;
+                // Don't let the wheel grouped under the axle drag the centre off the axle itself.
+                if (wheelMesh != null && (r.transform == wheelMesh || r.transform.IsChildOf(wheelMesh))) continue;
+                if (!any) { b = r.bounds; any = true; } else b.Encapsulate(r.bounds);
             }
+            return any ? b.center : axle.position;
         }
 
-        /// <summary>The local cardinal axis along which the wheel is longest (or shortest).</summary>
-        static Vector3 CardinalOfExtent(Vector3 size, bool longest)
+        static bool IsMeshRenderer(Renderer r) =>
+            r != null && !(r is ParticleSystemRenderer) && !(r is TrailRenderer) && !(r is LineRenderer);
+
+        static Vector3 LocalAxisOf(AxleAxis a) => a switch
         {
-            int idx = 0;
-            for (int k = 1; k < 3; k++)
-                if (longest ? size[k] > size[idx] : size[k] < size[idx]) idx = k;
-            return idx == 0 ? Vector3.right : idx == 1 ? Vector3.up : Vector3.forward;
-        }
+            AxleAxis.X => Vector3.right,
+            AxleAxis.Y => Vector3.up,
+            _          => Vector3.forward,
+        };
 
         /// <summary>Rolling radius = half the largest wheel dimension perpendicular to the axle.</summary>
         static float HalfPerpendicularExtent(Vector3 size, Vector3 axis)
@@ -402,17 +509,43 @@ namespace NasaSim
             return new Vector3(a.x, _path.Points[edgeHi].position.y, a.z);
         }
 
+        /// <summary>
+        /// Roll each visual wheel by the distance the tractor covered. Every wheel is handled on its own:
+        /// its own axle, its own radius, its own accumulated angle. Purely cosmetic - the tractor's motion
+        /// is already decided by the time this runs.
+        /// </summary>
         void SpinWheels(float distance)
         {
-            if (driveWheels == null || distance <= 0f || wheelRadius <= 0f) return;
-            float deg = distance / wheelRadius * Mathf.Rad2Deg;
-            for (int i = 0; i < driveWheels.Length; i++)
+            if (_wheels == null || distance <= 0f) return;
+
+            for (int i = 0; i < _wheels.Length; i++)
             {
-                if (driveWheels[i] == null) continue;
-                Vector3 axis = (_wheelAxes != null && i < _wheelAxes.Length && _wheelAxes[i].sqrMagnitude > 1e-6f)
-                    ? _wheelAxes[i]
-                    : Vector3.right;
-                driveWheels[i].Rotate(axis, deg, Space.Self);
+                var w = _wheels[i];
+                if (w.mesh == null || w.radius <= 1e-4f) continue;
+
+                // Read the multipliers from the serialized entries rather than the cached bind, so both
+                // can be dragged live in the Inspector while playing.
+                float mult = wheelSpinMultiplier;
+                if (wheels != null && i < wheels.Length && wheels[i] != null)
+                    mult *= wheels[i].spinMultiplier;
+
+                w.angle = Mathf.Repeat(w.angle + distance / w.radius * Mathf.Rad2Deg * mult, 360f);
+                _wheels[i] = w;                                  // struct: write the angle back
+
+                if (w.axle == null)
+                {
+                    // No pivot given: spin the mesh in place about its own chosen local axis, from rest.
+                    w.mesh.localRotation = w.restRot * Quaternion.AngleAxis(w.angle, w.localAxis);
+                    continue;
+                }
+
+                // Rebuild the pose from the axle each frame: rotate about the axle's chosen local axis,
+                // applied to the rest pose captured relative to that axle. Exact, and drift-free however
+                // far the mesh's own pivot sits from the hub.
+                Quaternion spin = Quaternion.AngleAxis(w.angle, w.localAxis);
+                w.mesh.SetPositionAndRotation(
+                    w.axle.TransformPoint(w.pivotLocal + spin * w.restPos),
+                    w.axle.rotation * spin * w.restRot);
             }
         }
 
@@ -431,11 +564,85 @@ namespace NasaSim
         }
 
 #if UNITY_EDITOR
+        /// <summary>
+        /// Scene-view aid for setting up wheels: draws each wheel's ACTUAL axis of rotation, so a wrong
+        /// axle orientation or an off-hub pivot is obvious before you press Play.
+        ///
+        /// <list type="bullet">
+        /// <item><b>Cyan line</b> - the axis of rotation, through the pivot.</item>
+        /// <item><b>Red dot</b> - the exact pivot point. If it is not at the wheel's hub, the wheel will
+        /// swing in an arc instead of spinning on the spot.</item>
+        /// <item><b>Yellow circle</b> - the rolling circle at the measured radius; it should sit on the
+        /// rim. If it does not, the spin RATE will be off.</item>
+        /// <item><b>White spoke</b> - turns as the wheel spins, so you can watch it roll in Play mode.</item>
+        /// </list>
+        /// </summary>
+        void DrawWheelAxisGizmos()
+        {
+            if (!showWheelGizmos || wheels == null) return;
+
+            int count = Mathf.Min(wheels.Length, MaxWheels);
+            for (int i = 0; i < count; i++)
+            {
+                var w = wheels[i];
+                if (!TryGetWheelAxis(w, out Vector3 pivot, out Vector3 axis, out float radius, out bool measured))
+                    continue;
+
+                // Axis of rotation: a line through the pivot, long enough to read at a glance.
+                float half = Mathf.Max(radius * 1.6f, 0.2f);
+                Gizmos.color = Color.cyan;
+                Gizmos.DrawLine(pivot - axis * half, pivot + axis * half);
+
+                // Pivot point.
+                Gizmos.color = Color.red;
+                Gizmos.DrawSphere(pivot, Mathf.Max(radius * 0.07f, 0.012f));
+
+                // Rolling circle, in the plane the wheel actually turns in.
+                Gizmos.color = measured ? Color.yellow : new Color(1f, 0.5f, 0f);
+                DrawCircleGizmo(pivot, axis, radius);
+
+                // A spoke that follows the mesh, so the rotation is visible while playing.
+                Vector3 spoke = Vector3.ProjectOnPlane(w.mesh.up, axis);
+                if (spoke.sqrMagnitude < 1e-6f) spoke = Vector3.ProjectOnPlane(w.mesh.forward, axis);
+                if (spoke.sqrMagnitude > 1e-6f)
+                {
+                    Gizmos.color = Color.white;
+                    Gizmos.DrawLine(pivot, pivot + spoke.normalized * radius);
+                }
+
+                float shownMult = wheelSpinMultiplier * w.spinMultiplier;
+                UnityEditor.Handles.color = Color.cyan;
+                UnityEditor.Handles.Label(pivot + axis * half,
+                    $"{w.mesh.name}\naxle: {w.axleAxis}   r = {radius:0.###}{(measured ? "" : " (not measured)")}" +
+                    $"{(Mathf.Approximately(shownMult, 1f) ? "" : $"   speed x{shownMult:0.##}")}" +
+                    $"{(w.axle == null ? "\nno axle - own pivot" : "")}");
+            }
+        }
+
+        static void DrawCircleGizmo(Vector3 center, Vector3 axis, float radius, int segments = 40)
+        {
+            Vector3 a = Vector3.Cross(axis, Vector3.up);
+            if (a.sqrMagnitude < 1e-6f) a = Vector3.Cross(axis, Vector3.right);
+            a = a.normalized * radius;
+            Vector3 b = Vector3.Cross(axis, a).normalized * radius;
+
+            Vector3 prev = center + a;
+            for (int i = 1; i <= segments; i++)
+            {
+                float t = i / (float)segments * Mathf.PI * 2f;
+                Vector3 p = center + a * Mathf.Cos(t) + b * Mathf.Sin(t);
+                Gizmos.DrawLine(prev, p);
+                prev = p;
+            }
+        }
+
         WaypointPath _gizmoCache;
         TextAsset _gizmoCacheAsset;
 
         void OnDrawGizmos()
         {
+            DrawWheelAxisGizmos();
+
             // Preview the CSV path in the Scene view even before any models exist.
             WaypointPath path = _path;
             if ((path == null || path.IsEmpty) && loader != null)

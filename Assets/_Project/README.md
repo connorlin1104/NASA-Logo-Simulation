@@ -37,10 +37,30 @@ so you can see them swinging as you walk.
 Walk north into the staircase to climb to the balcony and watch the logo being mowed from above. The
 staircase sits at z **+19 → +24**, clear of the logo's north edge (z +17) so it never blocks the tractor.
 
-**Wheel axle:** `Tractor Path Follower ▸ Wheel Spin Axis` chooses which of each wheel's own local axes it
-rolls about — *Auto Longest Side* (default), *Auto Shortest Side* (usually correct for a disc-shaped
-wheel, where the thin direction is the axle), explicit *X / Y / Z*, or *Custom* for an exact vector. The
-rolling radius is derived as half the largest dimension **perpendicular** to whichever axle you choose.
+**Wheels (visual):** `Tractor Path Follower ▸ Wheels` takes **up to 4** entries — a **Mesh**, an **Axle**
+(that wheel's pivot; when it's a mesh part the wheel spins about the **centre of that axle geometry**,
+not its transform origin) and an **Axle Axis** (which of the axle's local axes runs along the axle:
+**Z**/blue by default, or X/red, Y/green). Entries are fully
+independent (own pivot, own axis, own radius measured from its own mesh), and the whole thing is
+**cosmetic** — wheels follow the tractor because they're parented to it; nothing here affects the path
+driven or the line mowed.
+
+**Spin speed** is adjustable: `Wheel Spin Multiplier` on the component scales every wheel (`1` = true
+rolling, negative reverses), and each wheel's own `Spin Multiplier` trims it individually. Both can be
+dragged live in Play mode.
+
+Leaving **Axle** empty spins the mesh about its own pivot. Assign one when the mesh's pivot isn't at the
+hub — common in exported FBX, where it makes the wheel swing in an arc instead of rotating on the spot.
+If a wheel spins on the wrong axis, flip its **Axle Axis** (Z ↔ X is the usual 90° difference) rather
+than re-orienting the axle object.
+
+Already built your own axles? Select them in the Hierarchy and run **Tractor ▸ Populate Wheels From
+Selection** — it only fills in the list, with no rebuild or re-import. (A fresh `Swap In Selected FBX`
+creates an `Axle_<wheel>` at each measured hub instead.)
+
+Each wheel draws its **axis of rotation** in the Scene view for setup — cyan line = the axis, red dot =
+the pivot, yellow circle = the measured rolling radius, white spoke = turns as it spins. Toggle with
+**Show Wheel Gizmos**; it never renders in the Game view or a build.
 
 > **Tuning the feel:** all of the moon-walk values (walk/run speed, gravity, jump height, swing cadence,
 > first-person arm lift) live as named constants at the top of
@@ -165,7 +185,7 @@ Everything references **Transforms**, never object names, so replacing primitive
 | Stand-in | Replace with | Re-wire |
 | --- | --- | --- |
 | `Tractor` cube | Tractor FBX (chassis) | keep `Rigidbody` (kinematic) + convex `MeshCollider`; re-assign wheels/anchor below |
-| `Wheel_*` cubes | wheel meshes | drag into **Tractor Path Follower ▸ Drive Wheels**; pick the axle with **Wheel Spin Axis** (see below) |
+| `Wheel_*` cubes | wheel meshes | add to **Tractor Path Follower ▸ Wheels** (Mesh + Axle per wheel, see below) |
 | `MowerAnchor` | the mower deck point | move it where the cut should trace; it drives the trail |
 | `Floor` plane | Biodome floor mesh | keep a non-convex static `MeshCollider` |
 | `Biodome` (empty) | Biodome glass FBX | parent under `Environment` |
