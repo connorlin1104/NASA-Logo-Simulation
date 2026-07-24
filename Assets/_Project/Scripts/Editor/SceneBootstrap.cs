@@ -107,6 +107,9 @@ namespace NasaSim.EditorTools
             var follower = tractor.AddComponent<TractorPathFollower>();
             follower.driveWheels = driveWheels;
             follower.steerWheels = new Transform[0];   // front-steer left to the real FBX later
+            // These stand-in wheels are flattened cubes (0.25 x 0.8 x 0.8): the axle is the SHORTEST side,
+            // so pin the axis explicitly rather than relying on the auto-longest default.
+            follower.wheelSpinAxis = TractorPathFollower.WheelSpinAxis.X;
             follower.wheelRadius = 0.4f;
             follower.mower = mowerController;
             follower.mowerAnchor = mowerAnchor.transform;
@@ -142,6 +145,9 @@ namespace NasaSim.EditorTools
             manager.tractor = follower;
             manager.targetCamera = cam;
 
+            // ---- Astronaut, staircase, balcony (idempotent; also runnable on its own) ----
+            AstronautSetup.AddToScene(logAtEnd: false);
+
             // ---- Save + register scene ----
             System.IO.Directory.CreateDirectory("Assets/_Project/Scenes");
             EditorSceneManager.MarkSceneDirty(scene);
@@ -158,7 +164,7 @@ namespace NasaSim.EditorTools
             Debug.Log("[SceneBootstrap] Built NasaLogoSim. Green gizmo = mowed segments, red-dotted = pen-up gaps. Press Play to watch the tractor trace the logo.");
         }
 
-        static Material MakeMat(string path, string shaderName, Color color)
+        internal static Material MakeMat(string path, string shaderName, Color color)
         {
             var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
             if (existing != null) return existing;
@@ -176,14 +182,14 @@ namespace NasaSim.EditorTools
             return m;
         }
 
-        static void SetMaterial(GameObject go, Material m)
+        internal static void SetMaterial(GameObject go, Material m)
         {
             var r = go.GetComponent<Renderer>();
             if (r != null && m != null) r.sharedMaterial = m;
         }
 
         // Assign a private [SerializeField] field via SerializedObject so the wiring persists in the scene.
-        static void SetSerialized(Object target, string field, Object value)
+        internal static void SetSerialized(Object target, string field, Object value)
         {
             var so = new SerializedObject(target);
             var prop = so.FindProperty(field);

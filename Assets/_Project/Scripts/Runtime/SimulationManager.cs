@@ -57,11 +57,14 @@ namespace NasaSim
         void ApplyTrailWidth()
         {
             if (trailWidthFraction <= 0f) return;
-            var vis = mowingVisual != null ? mowingVisual : FindFirstObjectByType<MowingVisual_Trail>();
+            var vis = mowingVisual != null ? mowingVisual : FindAnyObjectByType<MowingVisual_Trail>();
             WaypointPath path = loader != null ? (loader.Current ?? loader.Load()) : null;
             if (vis == null || path == null || path.IsEmpty) return;
             float size = Mathf.Max(path.Bounds.size.x, path.Bounds.size.z);
             vis.width = Mathf.Max(0.01f, size * trailWidthFraction);
+            // Lay trail vertices at roughly half the ribbon width so corners read as smooth curves rather
+            // than faceted "choppy" segments, while staying bounded on long paths. Scales with the logo.
+            vis.minVertexDistance = Mathf.Clamp(vis.width * 0.5f, 0.05f, 0.5f);
         }
 
         void Update()

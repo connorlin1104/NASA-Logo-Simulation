@@ -16,6 +16,18 @@ namespace NasaSim
     {
         public enum EndBehavior { Stop, Loop, PingPong }
 
+        /// <summary>Which of a wheel's own LOCAL axes is the axle it rolls about.</summary>
+        public enum WheelSpinAxis
+        {
+            /// <summary>The wheel mesh's longest bounding-box side.</summary>
+            AutoLongestSide,
+            /// <summary>The wheel mesh's shortest bounding-box side (a disc wheel's axle is usually this).</summary>
+            AutoShortestSide,
+            X, Y, Z,
+            /// <summary>The explicit vector in <see cref="customWheelSpinAxis"/>.</summary>
+            Custom,
+        }
+
         [Header("Path source")]
         public CsvWaypointLoader loader;
 
@@ -32,8 +44,20 @@ namespace NasaSim
         public bool autoStart = true;
 
         [Header("Wheels (visual)")]
-        [Tooltip("Wheels spun about their local X axis. Requires local X to be the axle (points left/right).")]
+        [Tooltip("Wheels rolled about the axle chosen by Wheel Spin Axis below.")]
         public Transform[] driveWheels;
+        [Tooltip("Which of each wheel's LOCAL axes is the axle it spins about.\n" +
+                 "• Auto Longest / Shortest Side — measured per wheel from its own mesh bounding box, so " +
+                 "wheels mounted at different orientations each get the right axle.\n" +
+                 "• X / Y / Z — one fixed local axis for every wheel.\n" +
+                 "• Custom — the vector below.\n" +
+                 "NOTE: a disc-shaped wheel's axle is normally its SHORTEST side (the thin direction); the " +
+                 "longest sides are the diameter. If Auto Longest spins them wrong, try Auto Shortest.")]
+        public WheelSpinAxis wheelSpinAxis = WheelSpinAxis.AutoLongestSide;
+        [Tooltip("Used only when Wheel Spin Axis = Custom. The axle direction in the wheel's LOCAL space.")]
+        public Vector3 customWheelSpinAxis = Vector3.right;
+        [Tooltip("Auto-derived when Auto Wheel Radius is on: half the wheel's largest dimension PERPENDICULAR " +
+                 "to the axle (i.e. the true rolling radius).")]
         [Min(0.001f)] public float wheelRadius = 0.4f;
         [Tooltip("Optional front wheels that visually yaw toward the turn direction.")]
         public Transform[] steerWheels;
@@ -41,8 +65,21 @@ namespace NasaSim
 
         [Header("Mower")]
         public MowerController mower;
-        [Tooltip("Rear-bottom brush transform; its world position drives the mowing visual.")]
+        [Tooltip("Rear-bottom brush transform; its world position drives the mowing visual. Mount it on the " +
+                 "real plow/deck for the look you want — the trail is sub-sampled along the path each frame " +
+                 "so a rear deck traces smoothly (a far-rear deck still rounds very sharp corners slightly).")]
         public Transform mowerAnchor;
+
+        [Header("Model fit (keeps the tractor correct when you rescale it)")]
+        [Tooltip("The visual model (e.g. Tractor_Model). If set, its lowest point is dropped onto the ground " +
+                 "on each run, so shrinking or enlarging the tractor never makes it float or sink. Auto-found " +
+                 "by name if left empty; the primitive stand-in needs none.")]
+        public Transform visualRoot;
+        [Tooltip("Re-seat the model on the ground at the start of each run (safe to leave on).")]
+        public bool autoGroundModel = true;
+        [Tooltip("Recompute wheel radius from the wheel size each run, so wheels spin at the right rate " +
+                 "after a rescale. Turn off if you set Wheel Radius by hand.")]
+        public bool autoWheelRadius = true;
 
         [Header("Events")]
         public UnityEvent onStarted;
@@ -50,6 +87,7 @@ namespace NasaSim
         public WaypointEvent onWaypointReached;
         public PenEvent onPenStateChanged;
 
+        Vector3[] _wheelAxes;   // resolved per-wheel local axle, see ResolveWheels()
         WaypointPath _path;
         int _index;      // waypoint we are driving toward
         int _dir = 1;    // +1 forward, -1 reverse (ping-pong)
@@ -76,6 +114,7 @@ namespace NasaSim
             }
 
             mower?.ResetVisual();
+            FitModel();
 
             _dir = 1;
             _index = 0;
@@ -90,14 +129,133 @@ namespace NasaSim
 
         public void ResetRun() => Begin();
 
+        /// <summary>
+        /// Keep the tractor correct after the user rescales it. Grounding and wheel-spin rate both depend on
+        /// the model's size, so they are re-derived here rather than baked once at swap time — resize the
+        /// tractor in the Inspector and it still sits on the floor with wheels spinning at the right rate.
+        /// The follower drives the ROOT along the path in world units, so the trace itself is scale-proof;
+        /// only these cosmetic fits need refreshing.
+        /// </summary>
+        void FitModel()
+        {
+            ResolveWheels();
+
+            // Drop the visual so its lowest point rests on the ground (root.y - fixedY).
+            Transform model = visualRoot != null ? visualRoot : transform.Find("Tractor_Model");
+            if (autoGroundModel && model != null && TryRendererBounds(model.gameObject, out Bounds b))
+            {
+                float ground = transform.position.y - fixedY;
+                float dy = ground - b.min.y;
+                if (Mathf.Abs(dy) > 1e-4f) model.position += new Vector3(0f, dy, 0f);
+            }
+        }
+
+        /// <summary>
+        /// Work out, per wheel, which of its LOCAL axes is the axle, and the true rolling radius. Measured
+        /// from each wheel's own mesh bounding box (scaled by its transform), so it is independent of how
+        /// the wheel is oriented in the world and survives rescaling the tractor.
+        /// </summary>
+        void ResolveWheels()
+        {
+            if (driveWheels == null) { _wheelAxes = null; return; }
+            if (_wheelAxes == null || _wheelAxes.Length != driveWheels.Length)
+                _wheelAxes = new Vector3[driveWheels.Length];
+
+            float radius = 0f;
+            for (int i = 0; i < driveWheels.Length; i++)
+            {
+                var w = driveWheels[i];
+                if (w == null) { _wheelAxes[i] = Vector3.right; continue; }
+
+                Vector3 size = LocalWheelSize(w);
+                Vector3 axis = ResolveSpinAxis(size);
+                _wheelAxes[i] = axis;
+                radius = Mathf.Max(radius, HalfPerpendicularExtent(size, axis));
+            }
+            if (autoWheelRadius && radius > 1e-4f) wheelRadius = radius;
+        }
+
+        /// <summary>Wheel dimensions along its OWN local axes, in world units (mesh bounds x transform scale).</summary>
+        static Vector3 LocalWheelSize(Transform w)
+        {
+            Vector3 s = Vector3.one;
+            var mf = w.GetComponent<MeshFilter>();
+            if (mf != null && mf.sharedMesh != null) s = mf.sharedMesh.bounds.size;
+            else
+            {
+                var smr = w.GetComponent<SkinnedMeshRenderer>();
+                if (smr != null && smr.sharedMesh != null) s = smr.sharedMesh.bounds.size;
+            }
+            Vector3 sc = w.lossyScale;
+            return new Vector3(Mathf.Abs(s.x * sc.x), Mathf.Abs(s.y * sc.y), Mathf.Abs(s.z * sc.z));
+        }
+
+        Vector3 ResolveSpinAxis(Vector3 size)
+        {
+            switch (wheelSpinAxis)
+            {
+                case WheelSpinAxis.X: return Vector3.right;
+                case WheelSpinAxis.Y: return Vector3.up;
+                case WheelSpinAxis.Z: return Vector3.forward;
+                case WheelSpinAxis.Custom:
+                    return customWheelSpinAxis.sqrMagnitude > 1e-6f
+                        ? customWheelSpinAxis.normalized
+                        : Vector3.right;
+                case WheelSpinAxis.AutoShortestSide: return CardinalOfExtent(size, longest: false);
+                default:                             return CardinalOfExtent(size, longest: true);
+            }
+        }
+
+        /// <summary>The local cardinal axis along which the wheel is longest (or shortest).</summary>
+        static Vector3 CardinalOfExtent(Vector3 size, bool longest)
+        {
+            int idx = 0;
+            for (int k = 1; k < 3; k++)
+                if (longest ? size[k] > size[idx] : size[k] < size[idx]) idx = k;
+            return idx == 0 ? Vector3.right : idx == 1 ? Vector3.up : Vector3.forward;
+        }
+
+        /// <summary>Rolling radius = half the largest wheel dimension perpendicular to the axle.</summary>
+        static float HalfPerpendicularExtent(Vector3 size, Vector3 axis)
+        {
+            int axle = 0;
+            float best = Mathf.Abs(axis.x);
+            if (Mathf.Abs(axis.y) > best) { best = Mathf.Abs(axis.y); axle = 1; }
+            if (Mathf.Abs(axis.z) > best) axle = 2;
+
+            float d = 0f;
+            for (int k = 0; k < 3; k++)
+                if (k != axle) d = Mathf.Max(d, size[k]);
+            return d * 0.5f;
+        }
+
+        static bool TryRendererBounds(GameObject go, out Bounds bounds)
+        {
+            bounds = default;
+            bool any = false;
+            foreach (var r in go.GetComponentsInChildren<Renderer>(true))
+            {
+                if (r is ParticleSystemRenderer || r is TrailRenderer || r is LineRenderer) continue;
+                if (!any) { bounds = r.bounds; any = true; }
+                else bounds.Encapsulate(r.bounds);
+            }
+            return any;
+        }
+
         void Update()
         {
             if (!_running || _path == null) return;
 
             float budget = moveSpeed * Time.deltaTime;
+            float invSpeed = moveSpeed > 1e-6f ? 1f / moveSpeed : 0f;
             float totalMoved = 0f;
             int guard = 0;
 
+            // The tractor can cross several waypoints in one frame (high move speed, or a sped-up run).
+            // Rotation and the mower are therefore stepped INSIDE this loop, once per sub-move, instead of
+            // once per frame — otherwise a rear-mounted mower deck turns the once-per-frame rotation lag
+            // into faceted "choppy" jumps at corners. Distributing the turn over the sub-moves keeps the
+            // per-frame turn budget identical on straights while tracing corners smoothly.
             while (_running && budget > 1e-6f && guard++ < 512)
             {
                 Vector3 target = Flat(_path.Points[_index].position);
@@ -112,19 +270,36 @@ namespace NasaSim
                     continue;                 // jump consumes no budget
                 }
 
+                float step;
+                bool arrived;
                 if (dist <= budget || dist <= arriveThreshold)
                 {
                     transform.position = target;
-                    totalMoved += dist;
+                    step = dist;
                     budget -= dist;
-                    if (!Advance()) break;
+                    arrived = true;
                 }
                 else
                 {
                     transform.position = cur + (to / dist) * budget;
-                    totalMoved += budget;
+                    step = budget;
                     budget = 0f;
+                    arrived = false;
                 }
+                totalMoved += step;
+
+                // Turn toward this sub-move's direction, by the turn budget for the distance covered.
+                if (dist > 1e-6f)
+                {
+                    Vector3 dir = to / dist;
+                    Quaternion look = Quaternion.LookRotation(dir, Vector3.up);
+                    transform.rotation = Quaternion.RotateTowards(transform.rotation, look, turnSpeedDeg * step * invSpeed);
+                    ApplySteer(dir);
+                }
+
+                SampleMower();                // record the deck position at this sub-step, on the true path
+
+                if (arrived && !Advance()) break;
             }
 
             // Clamp Y (belt-and-braces; all motion above is already flat).
@@ -132,22 +307,12 @@ namespace NasaSim
             if (!Mathf.Approximately(p.y, fixedY))
                 transform.position = new Vector3(p.x, fixedY, p.z);
 
-            // Face the current target.
-            if (_running)
-            {
-                Vector3 to = Flat(_path.Points[_index].position) - Flat(transform.position);
-                if (to.sqrMagnitude > 1e-6f)
-                {
-                    Vector3 dir = to.normalized;
-                    Quaternion look = Quaternion.LookRotation(dir, Vector3.up);
-                    transform.rotation = Quaternion.RotateTowards(transform.rotation, look, turnSpeedDeg * Time.deltaTime);
-                    ApplySteer(dir);
-                }
-            }
-
             SpinWheels(totalMoved);
+        }
 
-            if (mower != null && mowerAnchor != null)
+        void SampleMower()
+        {
+            if (_penDown && mower != null && mowerAnchor != null)
                 mower.UpdateAt(MowerWorldPos());
         }
 
@@ -242,8 +407,13 @@ namespace NasaSim
             if (driveWheels == null || distance <= 0f || wheelRadius <= 0f) return;
             float deg = distance / wheelRadius * Mathf.Rad2Deg;
             for (int i = 0; i < driveWheels.Length; i++)
-                if (driveWheels[i] != null)
-                    driveWheels[i].Rotate(Vector3.right, deg, Space.Self);
+            {
+                if (driveWheels[i] == null) continue;
+                Vector3 axis = (_wheelAxes != null && i < _wheelAxes.Length && _wheelAxes[i].sqrMagnitude > 1e-6f)
+                    ? _wheelAxes[i]
+                    : Vector3.right;
+                driveWheels[i].Rotate(axis, deg, Space.Self);
+            }
         }
 
         void ApplySteer(Vector3 worldDir)

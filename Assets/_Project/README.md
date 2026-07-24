@@ -17,6 +17,92 @@ with no code changes.
 4. Press **Play**. The cube tractor drives the path, wheels spin, and a flat trail forms the logo.
    Press **R** to restart the run.
 
+## Controls
+
+You play as an astronaut walking around the biodome while the tractor mows.
+
+| Key | Action |
+|---|---|
+| **W A S D** (or arrows) | Walk (a relaxed lunar pace) |
+| **Shift** (hold) | Run — a brisk "speed walk on the moon" |
+| **Space** | Jump (low lunar gravity ⇒ a slow, floaty hop) |
+| **Mouse** | Look / orbit |
+| **C** | Cycle camera: third-person → first-person → overview |
+| **Esc** | Release the mouse cursor (click the Game view to re-capture it) |
+
+The astronaut moves with a slow, loping **moon-walk** cadence: gravity is low, the arm/leg swing is
+languid, and jumps hang. In **first-person** (press **C** once) the arms are lifted into the visor view
+so you can see them swinging as you walk.
+
+Walk north into the staircase to climb to the balcony and watch the logo being mowed from above. The
+staircase sits at z **+19 → +24**, clear of the logo's north edge (z +17) so it never blocks the tractor.
+
+**Wheel axle:** `Tractor Path Follower ▸ Wheel Spin Axis` chooses which of each wheel's own local axes it
+rolls about — *Auto Longest Side* (default), *Auto Shortest Side* (usually correct for a disc-shaped
+wheel, where the thin direction is the axle), explicit *X / Y / Z*, or *Custom* for an exact vector. The
+rolling radius is derived as half the largest dimension **perpendicular** to whichever axle you choose.
+
+> **Tuning the feel:** all of the moon-walk values (walk/run speed, gravity, jump height, swing cadence,
+> first-person arm lift) live as named constants at the top of
+> `Assets/_Project/Scripts/Editor/AstronautSetup.cs`. Edit them and re-run
+> **Tools ▸ NASA Sim ▸ Add Astronaut & Balcony To Scene** to apply — that menu re-pushes the feel onto
+> the scene's components, so you don't need to rebuild. (Re-running also resets any hand-tweaks you made
+> to those same fields in the Inspector.)
+
+Mowing-run keys (unchanged): **R** restart · **1**–**5** set 1×/2×/4×/8×/16× speed · **[** **]** halve
+and double it. Astronaut movement deliberately ignores this multiplier — it runs on unscaled time, so
+you walk at the same pace no matter how fast you fast-forward the tractor.
+
+The astronaut, staircase and balcony are primitive stand-ins, built by
+**Tools ▸ NASA Sim ▸ Add Astronaut & Balcony To Scene** (also run automatically by *Build Test Scene*).
+It is safe to re-run on an existing scene — it updates rather than duplicating.
+
+## Inserting your own models
+
+Drop `.fbx` files into `Assets/_Project/Models/` and use the **Tools ▸ NASA Sim** menu. Full
+step-by-step (Maya/Mixamo export settings included):
+[`Assets/_Project/Models/IMPORT_GUIDE.md`](Models/IMPORT_GUIDE.md).
+
+- **Tractor ▸ Validate / Swap In Selected FBX** — drops your tractor onto the existing path-follower,
+  auto-scales it, and wires the wheels (any object named `wheel*`) to spin.
+- **Astronaut ▸ Validate Selected FBX** — reports rig type, which arm bones were found, height in
+  metres, missing textures, and animation clips. Run this first.
+- **Astronaut ▸ Swap In Selected FBX** — replaces the placeholder, auto-scales to 1.8 m, re-binds the
+  arm bones and the first-person camera anchor. The controller and camera rig are untouched.
+- **Astronaut ▸ Rotate Model 90 (fix facing)** — for models that don't face +Z.
+- **Biodome ▸ Wire Up Selected Model** — adds colliders by name prefix and generates smooth ramp
+  colliders over staircases so the astronaut climbs without jitter.
+
+**Rig the astronaut as Humanoid and no naming convention is needed at all** — Unity's avatar maps the
+bones whatever they're called. Full spec, prefix table, export checklist and troubleshooting:
+[`Assets/_Project/Models/IMPORT_GUIDE.md`](Models/IMPORT_GUIDE.md).
+
+## Resizing models & world scale
+
+The whole sim works in **metres**, anchored to the logo. The logo auto-fits to **40 units** across
+(`CsvWaypointLoader ▸ Target World Size`) on a 50×50 floor, so a 1.8 m astronaut reads as small and the
+tractor as a vehicle. Keep that logo size fixed and scale everything else to sit around it, and nothing
+drifts out of proportion. Anything derived from size (mowed-trail width, stair ramps) is expressed as a
+fraction or measured from bounds, so it follows the scale automatically.
+
+**Shrinking the tractor** (to fit the logo better): scale the **`Tractor_Model`** child, *not* the
+`Tractor` root. The root drives the path in world units, so the trace stays exact at any size; the mower
+anchor is a sibling of the model, so the cut line doesn't move either. On the next Play the follower
+**re-grounds the model and recomputes the wheel-spin rate** from its new size (`Tractor Path Follower ▸
+Auto Ground Model / Auto Wheel Radius`), so it can't float, sink, or spin wrong. Re-running
+**Tractor ▸ Swap In Selected FBX** also re-fits it.
+
+**Resizing the astronaut:** scale the **`Astronaut` root** uniformly — the CharacterController, the
+Head/CameraPivot camera anchors and the visual all scale together, so collision and camera stay
+consistent. (Walk/run speed stay in metres per second; lower them in `Astronaut Controller` if a smaller
+astronaut should also step slower.) Or just change `TargetAstronautHeight` in `ModelImportTools.cs` and
+re-run **Astronaut ▸ Swap In Selected FBX**.
+
+**Grass & biodome (importing soon):** import them at metric scale (or set **Scale Factor** on the FBX so
+they read in metres), sized to enclose the ~40 m logo. Because the astronaut is auto-scaled to 1.8 m and
+the tractor auto-grounds, they'll sit correctly against a real-scale biodome with no extra tuning. The
+**Biodome ▸ Wire Up** colliders and stair ramps are all measured from bounds, so they're scale-proof.
+
 ## Inserting your own CSV
 
 1. Drop your waypoint CSV into `Assets/_Project/Data/` (replace or sit beside `nasa_logo.csv`).
@@ -79,13 +165,18 @@ Everything references **Transforms**, never object names, so replacing primitive
 | Stand-in | Replace with | Re-wire |
 | --- | --- | --- |
 | `Tractor` cube | Tractor FBX (chassis) | keep `Rigidbody` (kinematic) + convex `MeshCollider`; re-assign wheels/anchor below |
-| `Wheel_*` cubes | wheel meshes | drag into **Tractor Path Follower ▸ Drive Wheels** (spin about local **X** = axle) |
+| `Wheel_*` cubes | wheel meshes | drag into **Tractor Path Follower ▸ Drive Wheels**; pick the axle with **Wheel Spin Axis** (see below) |
 | `MowerAnchor` | the mower deck point | move it where the cut should trace; it drives the trail |
 | `Floor` plane | Biodome floor mesh | keep a non-convex static `MeshCollider` |
 | `Biodome` (empty) | Biodome glass FBX | parent under `Environment` |
 
-The mower anchor is mid-mounted on the tractor pivot so the cut traces the CSV **exactly**; move it
-rearward on the real model if you want a trailing deck (it will then round off sharp corners slightly).
+The mower anchor is mid-mounted on the tractor pivot so the cut traces the CSV **exactly**. To draw the
+cut from a rear **plow/deck** instead, move `MowerAnchor` there: the follower **sub-samples the deck
+position along the path within each frame**, so the ribbon stays smooth (no choppy facets at corners)
+even when the tractor crosses several waypoints per frame or the run is sped up. A far-rear deck still
+rounds *very* sharp letter corners slightly — that's inherent to a trailing deck; keep the anchor as
+close to the axle as the look allows, or lower **Mowing Visual_Trail ▸ Min Vertex Distance** for crisper
+corners.
 
 ## Colliders
 

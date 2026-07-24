@@ -60,3 +60,13 @@ crashlytics-build.properties
 # Python cache from the helper exporters in Assets/_Project/Data
 __pycache__/
 *.pyc
+
+# Mono/Unity crash dumps (e.g. from a batch-mode run colliding with an open Editor)
+mono_crash.*.json
+
+# Unity's auto-generated scene recovery snapshots
+/Assets/_Recovery/
+/Assets/_Recovery.meta
+
+# Orphan .meta left behind for the gitignored __pycache__ folder
+__pycache__.meta
