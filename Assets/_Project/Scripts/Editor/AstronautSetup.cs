@@ -34,6 +34,16 @@ namespace NasaSim.EditorTools
         const float MoonGravity = -3.5f;       // low, floaty
         const float JumpSpeed = 3.4f;          // Space; ~1.6 m apex under MoonGravity
         const float GroundedStick = -2f;
+        // Jump feel: forgiving input + a committed arc.
+        const float CoyoteTime = 0.12f;        // jump still fires briefly after leaving an edge
+        const float JumpBufferTime = 0.12f;    // a press just before landing still fires
+        const float JumpCutMultiplier = 0.5f;  // release Space mid-rise for a shorter hop
+        const float AirControl = 0.55f;        // reduced mid-air steering, so the hop commits
+        // Jump/landing pose (visual).
+        const float JumpLegTuckDeg = 35f;
+        const float JumpArmRaiseDeg = 25f;
+        const float LandingSquashDepth = 0.16f;
+        const float LandingKneeBendDeg = 30f;
         const float StrideFrequency = 0.34f;   // slow, loping cadence (strides per metre)
         const float ArmSwingDeg = 34f;
         const float LegSwingDeg = 28f;
@@ -164,6 +174,11 @@ namespace NasaSim.EditorTools
             controller.groundedStick = GroundedStick;
             controller.enableJump = true;
             controller.jumpSpeed = JumpSpeed;
+            controller.coyoteTime = CoyoteTime;
+            controller.jumpBufferTime = JumpBufferTime;
+            controller.variableJumpHeight = true;
+            controller.jumpCutMultiplier = JumpCutMultiplier;
+            controller.airControl = AirControl;
 
             visual.strideFrequency = StrideFrequency;
             visual.armSwingDeg = ArmSwingDeg;
@@ -173,6 +188,13 @@ namespace NasaSim.EditorTools
             visual.firstPersonArmLift = FirstPersonArmLift;
             visual.firstPersonElbowBend = FirstPersonElbowBend;
             visual.firstPersonSwingScale = FirstPersonSwingScale;
+
+            visual.jumpPose = true;
+            visual.jumpLegTuckDeg = JumpLegTuckDeg;
+            visual.jumpArmRaiseDeg = JumpArmRaiseDeg;
+            visual.landingSquash = true;
+            visual.landingSquashDepth = LandingSquashDepth;
+            visual.landingKneeBendDeg = LandingKneeBendDeg;
         }
 
         /// <summary>

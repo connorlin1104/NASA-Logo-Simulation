@@ -45,6 +45,23 @@ namespace NasaSim
         public bool enableJump = true;
         [Tooltip("Launch velocity (m/s). Apex height ~= jumpSpeed^2 / (2 * |gravity|).")]
         [Min(0f)] public float jumpSpeed = 3.4f;
+        [Tooltip("Grace period after stepping off a ledge/stair during which a jump still fires, so " +
+                 "leaving an edge doesn't 'eat' the jump. Seconds.")]
+        [Min(0f)] public float coyoteTime = 0.12f;
+        [Tooltip("Press Space up to this long BEFORE landing and the jump fires the instant you touch " +
+                 "down, instead of being dropped. Seconds.")]
+        [Min(0f)] public float jumpBufferTime = 0.12f;
+        [Tooltip("Release Space while still rising to cut the hop short - tap for a low hop, hold for the " +
+                 "full floaty arc.")]
+        public bool variableJumpHeight = true;
+        [Tooltip("Rising speed is multiplied by this the instant Space is released mid-jump. Lower = a " +
+                 "bigger gap between a tap and a full hold.")]
+        [Range(0.05f, 1f)] public float jumpCutMultiplier = 0.5f;
+
+        [Header("Air control")]
+        [Tooltip("How much WASD steers the astronaut mid-jump: 0 = none (commit to the arc), 1 = full " +
+                 "ground control. Below 1 gives a heavier, more committed lunar hop.")]
+        [Range(0f, 1f)] public float airControl = 0.55f;
 
         [Header("Camera relationship")]
         [Tooltip("Optional. When set, WASD is interpreted relative to where the camera is looking " +
@@ -60,11 +77,18 @@ namespace NasaSim
         CharacterController _cc;
         float _velocityY;
         Vector3 _horizontalVelocity;
+        float _coyoteTimer;
+        float _jumpBufferTimer;
+        bool _jumpCutArmed;
 
         /// <summary>Current horizontal ground speed in m/s. Read by <see cref="AstronautLocomotionVisual"/>.</summary>
         public float CurrentSpeed => _horizontalVelocity.magnitude;
         public bool IsMoving => CurrentSpeed > 0.05f;
         public bool IsGrounded => _cc != null && _cc.isGrounded;
+        /// <summary>Signed vertical velocity (m/s); positive = rising. Read by the visual for the jump pose.</summary>
+        public float VerticalVelocity => _velocityY;
+        /// <summary>Downward speed (m/s) at the instant of the latest touchdown, otherwise 0. Read for the landing squash.</summary>
+        public float LandingImpact { get; private set; }
 
         void Awake()
         {
@@ -92,9 +116,13 @@ namespace NasaSim
             float dt = Time.unscaledDeltaTime;   // see class summary
             if (dt <= 0f) return;
 
+            LandingImpact = 0f;
+
             Vector2 input = ReadMoveInput();
             bool running = ReadRunInput();
             bool jumpPressed = ReadJumpInput();
+            bool jumpReleased = ReadJumpReleased();
+            bool grounded = _cc.isGrounded;
 
             // ---- Desired horizontal velocity ----
             Vector3 wish = Vector3.zero;
@@ -122,7 +150,10 @@ namespace NasaSim
                 wish *= running ? runSpeed : walkSpeed;
             }
 
-            _horizontalVelocity = Vector3.MoveTowards(_horizontalVelocity, wish, acceleration * dt);
+            // Reduced steering in the air (airControl < 1) makes a jump feel committed rather than
+            // twitchy, without touching the responsive feel on the ground.
+            float accel = acceleration * (grounded ? 1f : Mathf.Clamp01(airControl));
+            _horizontalVelocity = Vector3.MoveTowards(_horizontalVelocity, wish, accel * dt);
 
             // ---- Face travel direction (third person only) ----
             if (!bodyRelative && _horizontalVelocity.sqrMagnitude > 1e-4f)
@@ -131,22 +162,51 @@ namespace NasaSim
                 transform.rotation = Quaternion.RotateTowards(transform.rotation, look, rotationSpeedDeg * dt);
             }
 
-            // ---- Gravity + jump ----
-            bool grounded = _cc.isGrounded;
+            // ---- Gravity + jump (forgiving input) ----
+            // Coyote time: keep the jump alive for a moment after the ground drops away.
+            if (grounded) _coyoteTimer = coyoteTime;
+            else _coyoteTimer = Mathf.Max(0f, _coyoteTimer - dt);
+
+            // Jump buffer: remember a press briefly so one made just before landing still fires.
+            if (jumpPressed) _jumpBufferTimer = jumpBufferTime;
+            else _jumpBufferTimer = Mathf.Max(0f, _jumpBufferTimer - dt);
+
             if (grounded && _velocityY < 0f)
                 _velocityY = groundedStick;                 // stick to the ground so isGrounded stays true
-            if (enableJump && grounded && jumpPressed)
+
+            if (enableJump && _jumpBufferTimer > 0f && _coyoteTimer > 0f)
+            {
                 _velocityY = jumpSpeed;                     // launch (overrides the stick this frame)
+                _jumpBufferTimer = 0f;                      // consume the buffered press...
+                _coyoteTimer = 0f;                          // ...and the coyote window, so it can't double-fire
+                _jumpCutArmed = variableJumpHeight;         // this jump may be shortened by releasing Space
+            }
+
+            // Variable height: releasing Space while still rising ends the upward push early.
+            if (_jumpCutArmed && jumpReleased && _velocityY > 0f)
+            {
+                _velocityY *= jumpCutMultiplier;
+                _jumpCutArmed = false;
+            }
+            if (_velocityY <= 0f) _jumpCutArmed = false;    // past the apex there is nothing left to cut
+
             if (!grounded || _velocityY > 0f)
                 _velocityY += gravity * dt;                 // integrate the arc while rising or airborne
 
             Vector3 motion = _horizontalVelocity;
             motion.y = _velocityY;
+
+            float descentSpeed = _velocityY < 0f ? -_velocityY : 0f;
             _cc.Move(motion * dt);
 
-            // Landing: zero the accumulated fall speed so the next step isn't launched.
-            if (_cc.isGrounded && _velocityY < groundedStick)
-                _velocityY = groundedStick;
+            // Touchdown: report the impact for the landing squash, then zero the fall so the next step
+            // isn't launched. 'grounded' is this frame's START state, so '!grounded && now grounded' is
+            // exactly the landing frame; the >1 m/s floor ignores gentle slope contact.
+            if (_cc.isGrounded)
+            {
+                if (!grounded && descentSpeed > 1f) LandingImpact = descentSpeed;
+                if (_velocityY < groundedStick) _velocityY = groundedStick;
+            }
         }
 
         Vector2 ReadMoveInput()
@@ -188,6 +248,17 @@ namespace NasaSim
 #endif
         }
 
+        bool ReadJumpReleased()
+        {
+            if (!enableInput) return false;
+#if ENABLE_INPUT_SYSTEM
+            var kb = Keyboard.current;
+            return kb != null && kb.spaceKey.wasReleasedThisFrame;
+#else
+            return false;
+#endif
+        }
+
         /// <summary>Drop the astronaut at a position without fighting the CharacterController's own sweep.</summary>
         public void Teleport(Vector3 position, Quaternion rotation)
         {
@@ -198,6 +269,9 @@ namespace NasaSim
             _cc.enabled = wasEnabled;
             _velocityY = 0f;
             _horizontalVelocity = Vector3.zero;
+            _coyoteTimer = 0f;
+            _jumpBufferTimer = 0f;
+            _jumpCutArmed = false;
         }
     }
 }

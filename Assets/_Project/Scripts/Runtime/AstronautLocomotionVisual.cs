@@ -74,6 +74,28 @@ namespace NasaSim
         [Tooltip("Set by AstronautCameraRig: true only while the first-person (visor) camera is active.")]
         public bool firstPerson;
 
+        [Header("Jump pose")]
+        [Tooltip("Tuck the legs up and lift the arms while airborne instead of freezing rigid in the air.")]
+        public bool jumpPose = true;
+        [Tooltip("How far the thighs tuck up-forward at the peak of a jump.")]
+        [Range(0f, 90f)] public float jumpLegTuckDeg = 35f;
+        [Tooltip("How far the arms rise while airborne.")]
+        [Range(0f, 90f)] public float jumpArmRaiseDeg = 25f;
+        [Tooltip("How quickly the jump pose eases in on takeoff and out on landing.")]
+        [Min(0.1f)] public float jumpPoseBlendSpeed = 9f;
+
+        [Header("Landing")]
+        [Tooltip("Dip the body and bend the knees briefly on touchdown so a landing has weight.")]
+        public bool landingSquash = true;
+        [Tooltip("How far the body dips at the hardest landing (metres).")]
+        [Range(0f, 0.5f)] public float landingSquashDepth = 0.16f;
+        [Tooltip("Extra knee bend at the hardest landing (degrees).")]
+        [Range(0f, 90f)] public float landingKneeBendDeg = 30f;
+        [Tooltip("Downward speed that produces a full-strength squash (m/s). A normal moon-hop lands near this.")]
+        [Min(0.5f)] public float landingFullSpeed = 3.5f;
+        [Tooltip("How quickly the crouch recovers after landing.")]
+        [Min(0.1f)] public float landingRecoverSpeed = 7f;
+
         [Header("Animator parameters")]
         public string speedParameter = "Speed";
         public string movingParameter = "IsMoving";
@@ -91,6 +113,8 @@ namespace NasaSim
             public float weight;
             public float fpBiasDeg;      // constant forward lift/bend applied only in first person (negative = forward)
             public float fpSwingScale;   // amplitude multiplier applied only in first person
+            public float airBiasDeg;     // forward tuck/lift applied only while airborne (jump pose; negative = forward)
+            public float squashBiasDeg;  // extra bend applied only during a landing squash (legs)
         }
 
         Swinger[] _swingers = new Swinger[0];
@@ -98,6 +122,10 @@ namespace NasaSim
         float _amplitude;
         float _fpBlend;        // 0 = third person / overview, 1 = first person (eased)
         float _groundBlend = 1f;   // 1 = grounded, eased toward 0 in the air to still the limbs mid-jump
+        float _airPose;        // 0 = grounded, 1 = airborne (eased); drives the jump tuck/lift
+        float _squash;         // 0..1 landing crouch; snaps up on impact, eases back to standing
+        Transform _squashRoot; // the model-root child dipped for the landing squash (never the CC root)
+        Vector3 _restSquashRootPos;
         bool _useAnimator;
         bool _hasSpeedParam, _hasMovingParam, _hasGroundedParam;
 
@@ -138,19 +166,25 @@ namespace NasaSim
             // arms use the same value so they lift together rather than counter-swinging.
             float legWeight = legSwingDeg / Mathf.Max(0.01f, armSwingDeg);
 
+            // Jump pose: arms rise and thighs tuck up-forward. As with the first-person bias, "forward"
+            // about the swing axis is a NEGATIVE angle, and both sides share the same value so they move
+            // together rather than counter-swinging. Legs also carry the landing knee-bend.
             var list = new System.Collections.Generic.List<Swinger>(6);
-            //                bone,        sign, weight,     fpBiasDeg,                fpSwingScale
-            AddSwinger(list, leftArm,      +1f, 1f,         -firstPersonArmLift,       firstPersonSwingScale);
-            AddSwinger(list, rightArm,     -1f, 1f,         -firstPersonArmLift,       firstPersonSwingScale);
-            AddSwinger(list, leftForearm,  +1f, forearmFollow, -firstPersonElbowBend,  firstPersonSwingScale);
-            AddSwinger(list, rightForearm, -1f, forearmFollow, -firstPersonElbowBend,  firstPersonSwingScale);
-            AddSwinger(list, leftLeg,      -1f, legWeight,   0f,                        1f);
-            AddSwinger(list, rightLeg,     +1f, legWeight,   0f,                        1f);
+            //                bone,        sign, weight,        fpBiasDeg,            fpSwingScale,          airBiasDeg,               squashBiasDeg
+            AddSwinger(list, leftArm,      +1f, 1f,            -firstPersonArmLift,   firstPersonSwingScale, -jumpArmRaiseDeg,          0f);
+            AddSwinger(list, rightArm,     -1f, 1f,            -firstPersonArmLift,   firstPersonSwingScale, -jumpArmRaiseDeg,          0f);
+            AddSwinger(list, leftForearm,  +1f, forearmFollow, -firstPersonElbowBend, firstPersonSwingScale, -jumpArmRaiseDeg * 0.6f,   0f);
+            AddSwinger(list, rightForearm, -1f, forearmFollow, -firstPersonElbowBend, firstPersonSwingScale, -jumpArmRaiseDeg * 0.6f,   0f);
+            AddSwinger(list, leftLeg,      -1f, legWeight,      0f,                    1f,                    -jumpLegTuckDeg,          -landingKneeBendDeg);
+            AddSwinger(list, rightLeg,     +1f, legWeight,      0f,                    1f,                    -jumpLegTuckDeg,          -landingKneeBendDeg);
             _swingers = list.ToArray();
+
+            _squashRoot = ResolveVisualRoot();
+            _restSquashRootPos = _squashRoot != null ? _squashRoot.localPosition : Vector3.zero;
         }
 
         void AddSwinger(System.Collections.Generic.List<Swinger> list, Transform bone, float sign,
-                        float weight, float fpBiasDeg, float fpSwingScale)
+                        float weight, float fpBiasDeg, float fpSwingScale, float airBiasDeg, float squashBiasDeg)
         {
             if (bone == null) return;
 
@@ -172,6 +206,8 @@ namespace NasaSim
                 weight = weight,
                 fpBiasDeg = fpBiasDeg,
                 fpSwingScale = fpSwingScale,
+                airBiasDeg = airBiasDeg,
+                squashBiasDeg = squashBiasDeg,
             });
         }
 
@@ -200,6 +236,22 @@ namespace NasaSim
         }
 
         static Transform Pick(Transform existing, Transform candidate) => candidate != null ? candidate : existing;
+
+        /// <summary>
+        /// The model-root child of the controller object - the only thing safe to dip for the landing
+        /// squash. It must NOT be the controller's own transform (dipping that would fight the
+        /// CharacterController's Move), so we walk up from a resolved bone to the highest ancestor that is
+        /// still a direct child of this object. Returns null if the bones sit directly on the controller
+        /// root (nothing safe to dip - the squash then only bends the knees).
+        /// </summary>
+        Transform ResolveVisualRoot()
+        {
+            Transform bone = leftLeg ?? rightLeg ?? leftArm ?? rightArm ?? leftForearm ?? rightForearm;
+            if (bone == null) return null;
+            Transform t = bone;
+            while (t.parent != null && t.parent != transform) t = t.parent;
+            return t.parent == transform ? t : null;
+        }
 
         /// <summary>Case/separator-insensitive search over all descendants; tolerates "mixamorig:LeftArm" style prefixes.</summary>
         Transform FindBone(params string[] candidates)
@@ -258,6 +310,18 @@ namespace NasaSim
             _fpBlend = Mathf.Lerp(_fpBlend, firstPerson ? 1f : 0f, 1f - Mathf.Exp(-firstPersonBlendSpeed * dt));
             _groundBlend = Mathf.Lerp(_groundBlend, grounded ? 1f : 0f, 1f - Mathf.Exp(-8f * dt));
 
+            // Jump pose eases in while airborne (tuck legs, raise arms) and out on landing.
+            float airTarget = (jumpPose && !grounded) ? 1f : 0f;
+            _airPose = Mathf.Lerp(_airPose, airTarget, 1f - Mathf.Exp(-jumpPoseBlendSpeed * dt));
+
+            // Landing squash: snap up on the touchdown impact, then ease back to standing.
+            if (landingSquash && controller != null && controller.LandingImpact > 0f)
+            {
+                float impact = Mathf.Clamp01(controller.LandingImpact / landingFullSpeed);
+                if (impact > _squash) _squash = impact;
+            }
+            _squash = Mathf.Lerp(_squash, 0f, 1f - Mathf.Exp(-landingRecoverSpeed * dt));
+
             // Phase advances with distance travelled, so the swing matches the stride at any speed.
             _phase += speed * dt * strideFrequency * Mathf.PI * 2f;
             if (_phase > Mathf.PI * 2f) _phase -= Mathf.PI * 2f;
@@ -267,7 +331,8 @@ namespace NasaSim
                 ? Mathf.Lerp(_amplitude, target, 1f - Mathf.Exp(-settleSpeed * dt))
                 : target;
 
-            // In the air the limbs settle (a floaty lunar hop reads as still limbs, not a mid-swing freeze).
+            // The walk swing settles in the air (a floaty lunar hop reads as a still, tucked body, not a
+            // mid-swing freeze); the jump pose above supplies the airborne shape instead.
             float swing = Mathf.Sin(_phase) * armSwingDeg * _amplitude * _groundBlend;
 
             for (int i = 0; i < _swingers.Length; i++)
@@ -275,10 +340,17 @@ namespace NasaSim
                 var s = _swingers[i];
                 if (s.bone == null) continue;
                 float ampScale = 1f + (s.fpSwingScale - 1f) * _fpBlend;
-                float angle = swing * s.sign * s.weight * ampScale + s.fpBiasDeg * _fpBlend;
+                float angle = swing * s.sign * s.weight * ampScale
+                            + s.fpBiasDeg * _fpBlend
+                            + s.airBiasDeg * _airPose
+                            + s.squashBiasDeg * _squash;
                 // Pre-multiply: apply the swing in the PARENT's space, on top of the captured rest pose.
                 s.bone.localRotation = Quaternion.AngleAxis(angle, s.axis) * s.rest;
             }
+
+            // Dip the model root (never the controller root) for the landing crouch.
+            if (_squashRoot != null)
+                _squashRoot.localPosition = _restSquashRootPos + Vector3.down * (_squash * landingSquashDepth);
         }
     }
 }
