@@ -5,9 +5,9 @@ ModelImporter:
   internalIDToNameTable: []
   externalObjects: {}
   materials:
-    materialImportMode: 2
-    materialName: 0
-    materialSearch: 1
+    materialImportMode: 1
+    materialName: 1
+    materialSearch: 2
     materialLocation: 1
     searchTexturesGlobally: 0
   animations:
@@ -42,8 +42,8 @@ ModelImporter:
     importPhysicalCameras: 1
     importVisibility: 1
     importBlendShapes: 1
-    importCameras: 1
-    importLights: 1
+    importCameras: 0
+    importLights: 0
     nodeNameCollisionStrategy: 1
     fileIdsGeneration: 2
     swapUVChannels: 0

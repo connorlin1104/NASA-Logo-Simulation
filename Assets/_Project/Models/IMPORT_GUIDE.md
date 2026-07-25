@@ -13,6 +13,28 @@ The scene already works with primitive stand-ins, so you can swap models in one 
 
 ---
 
+## Part 0 — Materials that survive re-import (read this once, it ends the texture pain)
+
+Every model under `Assets/_Project/Models/` is now auto-processed on import
+(`NasaModelPostprocessor.cs`): each material slot is **remapped BY NAME to a project material** —
+`Assets/_Project/Materials/<Name>.mat` or anywhere else in the project. That means:
+
+1. **In Maya, name each material its FINAL Unity name** — `BiodomeGlass`, `TractorBody`, `DuckBody`,
+   `GrassClump`, … Avoid `lambert1` / default names: a material literally named "New Material" will
+   remap to whatever project material shares that name.
+2. Export with **Embed Media ON** (or PNG/TIF textures alongside — `.iff`, `.rgb` and `.gif` do NOT
+   import; re-save those as PNG in Maya's sourceimages first).
+3. First import: tune the material **once** in Unity (or use **Materials tab ▸ Extract Materials…** and
+   edit the extracted copy — keep the name).
+4. **Every later re-export/re-import keeps your tuned material automatically.** No more manually
+   re-assigning textures after each export.
+
+The Console logs which slots got remapped and which are still embedded-only after every import.
+**Tools ▸ NASA Sim ▸ Models ▸ Reimport & Remap All Models** re-runs the pass on everything at once
+(do this after authoring new project materials).
+
+---
+
 ## Part 1 — Tractor
 
 ### A. In Maya (before export)
@@ -350,6 +372,32 @@ prefab scattered by hand around the edges; just keep the count in the hundreds, 
 ~41 m and encloses it. The astronaut is auto-scaled to 1.8 m and the tractor auto-grounds, so
 everything lines up once the biodome's **Scale Factor** is right.
 
+
+## Part 6 — Full-vision prefixes and placeholders
+
+The vision features (airlock, water, wildlife, fruit, flowers) are built from **placeholders** that you
+swap for real FBX models later. Full click-order and Maya export checklist: **`Assets/_Project/VISION_SETUP.md`**.
+
+**Name prefixes recognised across the tools** (in Maya or in Unity):
+
+| Prefix | Meaning | Consumed by |
+|---|---|---|
+| `COL_` / `NOCOL_` | gets a MeshCollider / never collides | Biodome ▸ Wire Up |
+| `STAIR_` | collider + auto straight ramp | Wire Up |
+| `STAIR_SpiralRamp_*` | generated helicoid collider | Biodome ▸ Add Spiral Stair Ramp |
+| `BALCONY_` | solid collider | Wire Up |
+| `SPAWN_Outside` | astronaut spawn marker (outside the dome) | Biodome ▸ Wire Colliders & Spawn Outside |
+| `PLANT_<Type>_<n>` | plant scatter marker | Biodome ▸ Scatter Plants |
+| `DOOR_Outer` / `DOOR_Inner` | airlock door roots | Biodome ▸ Build Airlock In Tunnel |
+| `WATER_<Name>` | water body root, or a Maya locator marking a pond | Water ▸ Create Water Body |
+| `FRUIT_<n>` | fruit spawn marker on a tree root | FruitSpawner |
+| `PH_<Thing>` | placeholder visual — the swap target | Models ▸ Swap Placeholder With Selected FBX |
+| `<Root>_Model` | a swapped-in FBX visual | all swap tools |
+
+**Swapping a placeholder for a model:** select the `PH_*` object in the **Hierarchy** AND the FBX in
+the **Project** window (Cmd-click both) → **Tools ▸ NASA Sim ▸ Models ▸ Swap Placeholder With Selected
+FBX**. The model is bounds-matched to the placeholder and all scripts survive (they live on the parent
+root, never on the placeholder). **Models ▸ List All Placeholders** prints what's left to model.
 
 ## Quick troubleshooting
 
