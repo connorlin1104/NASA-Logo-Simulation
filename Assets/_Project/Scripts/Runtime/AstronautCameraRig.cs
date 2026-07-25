@@ -52,7 +52,7 @@ namespace NasaSim
         public float maxPitchFirstPerson = 80f;
 
         [Header("Third person")]
-        [Min(0.5f)] public float distance = 4f;
+        [Min(0.5f)] public float distance = 2f;
         [Tooltip("Extra height above the pivot, before pitch is applied.")]
         public float shoulderHeight = 0.3f;
         [Tooltip("How quickly the camera catches up to the astronaut. 0 = rigid.")]

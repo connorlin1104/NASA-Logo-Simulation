@@ -196,59 +196,160 @@ feel (speed, gravity, jump, swing cadence, first-person arm lift) is set by re-r
 
 ---
 
-## Part 3 — Biodome (dome + plants now; stairs later)
+## Part 3 — Biodome (dome, planting beds, plants)
 
-No staircase modelled yet, so for now this is **static scenery**: the dome and some plants. The tool
-below makes it walkable by reading a **name prefix** off each object.
+> **You do not have to open `newGreenHouse.mb` in Maya.** It is exported by a headless script that
+> never builds a viewport. This is the fix for the crash — see *Why Maya dies on "unhide all"* below.
 
-### A. In Maya — name objects by prefix
+### A. Export it (one command, no Maya window)
 
-Prefix each object's name so the importer knows what to do with it:
+```sh
+/Applications/Autodesk/maya2027/Maya.app/Contents/bin/mayapy \
+    "Assets/_Project/Data/maya_headless_export.py" \
+    --scene ~/Downloads/newGreenHouse.mb --mode all
+```
 
-| Put this prefix on… | Prefix | Effect |
-|---|---|---|
-| The **glass dome** | `NOCOL_` | Renderer only — you walk through it (use `COL_` if you want it solid) |
-| **Plants / decoration** | `NOCOL_` | No collider — walk past them freely |
-| A **floor / ground** slab | `COL_` | Solid — walkable surface |
-| **Walls** you shouldn't pass | `COL_` | Solid |
-| *(Later)* a **staircase flight** | `STAIR_` | Solid **+ auto smooth ramp** — as **one object** per flight |
-| *(Later)* the **balcony deck** | `BALCONY_` | Solid |
-| *(Optional)* an empty at floor level | `SPAWN_` | Astronaut starts here, facing its +Z |
+Takes about a minute and writes three things:
 
-Example: `NOCOL_GlassDome`, `NOCOL_Plant_01`, `NOCOL_Plant_02`, `COL_FloorSlab`, `SPAWN_Start`.
+| Output | What it is |
+|---|---|
+| `Models/Biodome.fbx` | Dome, tunnel and planting beds — 222,708 tris — plus 4,877 empty `PLANT_<Type>_<n>` markers, one at every plant |
+| `Models/Plant_Prototypes.fbx` | One low-poly mesh per plant type, 14 of them, ~10k tris total |
+| `Data/biodome_plants.csv` | The same plant positions in readable form (reference only — Unity uses the markers) |
 
-Also:
-- [ ] **Convert Paint Effects / XGen plants to polygons first** (Modify ▸ Convert ▸ Paint Effects to
-      Polygons) — otherwise they export as nothing. Keep them **small/light**; a converted field can be
-      hundreds of thousands of triangles.
-- [ ] **Embed Media = ON**, **Y-up**, **metres**, **freeze transforms**, delete history.
-- [ ] Export.
+`--mode structure`, `plants` or `scatter` run the three jobs separately.
 
-### B. In Unity
+### B. Why Maya dies on "unhide all"
 
-- [ ] Drop the biodome `.fbx` in `Assets/_Project/Models/`.
-- [ ] Drag it **from the Project window into the Hierarchy** (into the scene) and set its **Position to
-      (0, 0, 0)**.
-- [ ] If it's **way too big**, select the FBX in the Project window → Inspector → **Model** tab →
-      **Scale Factor** (e.g. `0.01` if it was modelled in centimetres) → **Apply**.
-- [ ] Select the biodome **in the Hierarchy** → **Tools ▸ NASA Sim ▸ Biodome ▸ Wire Up Selected Model.**
-      The Console reports how many pieces were made solid vs. pass-through.
-  - If it says **"no prefixes found,"** it made *everything* solid (including glass) — go back to Maya,
-    add the prefixes, re-export, and run it again.
-- [ ] **Press Play.** Walk around: you shouldn't fall through the floor, and you should be able to walk
-      past the plants and (if you set the dome to `NOCOL_`) through the glass.
+It is **not** the polygon count. The whole file is **282,416 triangles**, which is nothing — Unity
+draws that without noticing, and so should Maya.
 
-> When the staircase is modelled later, name the flight `STAIR_MainFlight` (one object) and the deck
-> `BALCONY_UpperDeck`, re-run the wire-up, and the astronaut will climb it — no code or scene changes.
+The hidden `plants` group holds **4,877 live Paint Effects strokes**. Each is a procedural brush
+authored for film — 78 segments around 14-sided tubes, with flowers and leaves on top — and Paint
+Effects re-tessellates *all of them* on the main thread every time the viewport refreshes. Unhiding
+the group is the moment Maya tries to build that geometry at once, on a machine with 8 GB of shared
+CPU/GPU memory. Your teammate is not doing anything different; he is on the same hardware and getting
+away with it because that much memory pressure is right at the edge — a few gigabytes free either way
+is the difference between swapping (slow) and being killed (crash).
 
-**Scale reference:** the logo auto-fits to **~40 units (metres) across** on a 50×50 floor. Size the
-biodome and grass to enclose that (a dome roughly 45–60 m wide), and import them at metric scale (or set
-**Scale Factor** on the FBX until they read in metres). Because the astronaut is auto-scaled to 1.8 m and
-the tractor auto-grounds, they'll sit correctly against the biodome with no extra tuning. Collider and
-stair-ramp generation both measure from bounds, so they're scale-proof. If the grass patch is a *tile*,
-keep it small and repeat it rather than exporting one giant field mesh.
+Two consequences worth knowing:
+
+- **Paint Effects strokes export to FBX as nothing at all.** Even a Maya session that survived opening
+  the file would give you a biodome with no plants in it. They have to be converted to polygons first,
+  which is what `--mode plants` does.
+- **Nothing is wrong with the model.** No cleanup, no retopology, no decimation of the dome is needed.
+
+If you ever *do* need it open in the GUI: leave `plants` hidden and it opens fine.
+
+### C. In Unity
+
+- [ ] Drop `Biodome.fbx` and `Plant_Prototypes.fbx` in `Assets/_Project/Models/` (the script already
+      puts them there).
+- [ ] Select `Biodome.fbx` → Inspector → **Model** tab → check the size. The dome is **41 units** wide
+      in Maya and the scene is in centimetres, so it usually arrives 100× too small. Set **Scale
+      Factor** to `100` (or untick **Convert Units**) until the dome reads **~41 m** — about 23 times
+      the astronaut's height. **Apply.**
+- [ ] Drag `Biodome.fbx` into the Hierarchy, position **(0, 0, 0)**.
+- [ ] Select it in the Hierarchy → **Tools ▸ NASA Sim ▸ Biodome ▸ Wire Up Selected Model**. The dome
+      and beds are already prefixed `NOCOL_` and the tunnel `COL_`, so this needs no work in Maya.
+- [ ] **Tools ▸ NASA Sim ▸ Biodome ▸ Scatter Plants.** Pick the biodome, leave the prototypes slot as
+      found, press **Scatter Plants**.
+
+The Console reports what was placed and the triangle total. At 100 % density that is ~4,900 plants and
+about **2.8M triangles**, drawn in roughly a dozen batches because the tool turns on GPU instancing.
+If the frame rate suffers, drop **Density %** and scatter again — the layout thins evenly and the tool
+clears the previous pass first, so you can try 40 %, then 70 %, without stacking plants on top of each
+other.
+
+### D. If a plant type looks wrong
+
+Everything is driven by two knobs at the top of `maya_headless_export.py`:
+
+| Knob | Effect |
+|---|---|
+| `PROTOTYPE_TRI_BUDGET` | Triangles per plant. Raise it for chunkier plants, lower it for a faster scene. Multiply by ~4,900 to predict the scene cost. |
+| `BRUSH_LIMITS` | How finely each brush is tessellated before conversion — `segments` along a tube, `tubeSections` around it. These are the numbers that were set for film. |
+
+Re-run `--mode plants` and scatter again; the biodome and markers do not need re-exporting.
+
+> Note the script simplifies the *brush* before converting rather than decimating the *mesh*
+> afterwards. One stroke paints a whole row of carrots as hundreds of separate tube shells, and no
+> mesh decimator can take a shell below one triangle — asking for an aggressive reduction deletes
+> whole plants instead of simplifying them. Painting fewer, coarser tubes keeps every plant intact.
+
+### E. Stairs, later
+
+No staircase is modelled yet. When one exists, name the flight `STAIR_MainFlight` (one object) and the
+deck `BALCONY_UpperDeck` in Maya, add them to `PREFIX_RULES` in the export script, re-export and re-run
+the wire-up. The astronaut will climb it with no code or scene changes.
 
 ---
+
+## Part 4 — Moon terrain and space background
+
+Neither of these is imported, because neither should be a model:
+
+- A **starfield is a texture on the inside of the sky**, not geometry. A modelled sphere is thousands
+  of wasted triangles that still has to be scaled past the far clip plane.
+- A **Unity Terrain** stores its surface as a heightmap and gets built-in LOD, culling and detail
+  scattering that an imported mesh of the same detail cannot match.
+
+The textures are already copied into `Assets/_Project/Textures/` from the Maya project's
+`sourceimages/SpaceEnvironmentTextures/`.
+
+- [ ] **Tools ▸ NASA Sim ▸ Environment ▸ Create Space Skybox** — builds a panoramic skybox from
+      `8k_stars_milky_way.jpg`, drops ambient light to near-black and sets the sun to hard shadows.
+      (Vacuum has no atmosphere to bounce light; without this the shadows look milky and the moon
+      reads as an overcast day.)
+- [ ] **Tools ▸ NASA Sim ▸ Environment ▸ Create Moon Terrain** — a 500 × 500 m terrain with 40 craters,
+      textured with `8k_moon.jpg`, and a flat 140 m pad at the centre sitting exactly at **y = 0** so
+      the logo, tractor and biodome need no repositioning.
+
+Afterwards, decide what the old `Floor` plane is for: delete it and mow the terrain, or keep it as the
+mowable surface with the terrain as the horizon around it. Sizes are constants at the top of
+`MoonEnvironmentSetup.cs` if you want a bigger world or a wider flat pad.
+
+For **Earth in the sky**, `2k_earth_daymap.jpg` is in the same folder — a sphere placed far away with
+an unlit material, or a quad that always faces the camera.
+
+---
+
+## Part 5 — Grass
+
+`grass3.mb` is **23,228 triangles**, so there is no performance problem to solve here — but almost all
+of it is in the wrong place:
+
+| Object | Tris | What to do |
+|---|---|---|
+| `pPlane1` | 20,000 | A ground plane subdivided 100 × 100 for no reason. **Do not import it** — the terrain (or the existing `Floor`) is the ground. |
+| `grassBermuda1MeshGroup` | 3,228 | The actual grass clump, already converted from Paint Effects. **This is the asset.** |
+
+Already exported for you as `Models/GrassClump.fbx`:
+
+```sh
+/Applications/Autodesk/maya2027/Maya.app/Contents/bin/mayapy \
+    "Assets/_Project/Data/maya_headless_export.py" \
+    --scene ~/Downloads/grass3.mb --mode structure \
+    --groups "grassBermuda1MeshGroup=NOCOL_" --out-name "GrassClump.fbx"
+```
+
+**Do not scatter it as GameObjects.** One clump is fine; a lawn's worth is not — that is the mistake
+that would actually cost you frames. Use it as a **Terrain detail mesh**, which Unity draws as GPU
+instances with automatic distance fade:
+
+- [ ] Select the terrain → **Paint Details** (the flower icon) → **Edit Details ▸ Add Detail Mesh**.
+- [ ] **Detail Prefab** = `GrassClump`, **Render Mode** = *Vertex Lit* (or *Grass* to get wind sway),
+      **Align To Ground** ≈ 1, **Noise Spread** ≈ 0.5.
+- [ ] Paint it where you want lawn. **Terrain Settings ▸ Detail Distance** controls how far out it
+      draws — the single biggest lever on cost.
+
+If you would rather keep the flat `Floor` plane as the mowed area, the same clump works as a plain
+prefab scattered by hand around the edges; just keep the count in the hundreds, not thousands.
+
+**Scale reference:** the logo auto-fits to **~40 units (metres) across** on a 50×50 floor. The dome is
+~41 m and encloses it. The astronaut is auto-scaled to 1.8 m and the tractor auto-grounds, so
+everything lines up once the biodome's **Scale Factor** is right.
+
 
 ## Quick troubleshooting
 
@@ -263,3 +364,10 @@ keep it small and repeat it rather than exporting one giant field mesh.
 | Arms don't swing | Rig must be **Humanoid** → run **Astronaut ▸ Validate Selected FBX** to see which bones are missing |
 | Falls through the biodome floor | Floor mesh needs a `COL_` prefix → re-run **Biodome ▸ Wire Up** |
 | Walks straight through the dome into space | You wanted it solid → prefix it `COL_` instead of `NOCOL_` |
+| Maya crashes opening the biodome | Expected — don't open it. Export headlessly with `maya_headless_export.py` (Part 3). To open it anyway, leave the `plants` group hidden. |
+| Biodome imports with no plants | Paint Effects never export to FBX. Run `--mode plants`, then **Biodome ▸ Scatter Plants**. |
+| **Scatter Plants** says "no markers" | `Biodome.fbx` predates the markers → re-run `--mode structure` and re-import |
+| Plants are the wrong size | The prototypes are unit plants scaled by each marker. If *all* of them are off, the biodome's **Scale Factor** is wrong, not the plants. |
+| Frame rate drops after scattering | Lower **Density %** and scatter again, or lower `PROTOTYPE_TRI_BUDGET` and re-run `--mode plants` |
+| Moon terrain floats above / sinks below the logo | Its flat pad is at `y = 0`; move the terrain object's **Y** to 0, don't move the logo |
+| Skybox is grey | Run **Environment ▸ Create Space Skybox**; if it errors, `8k_stars_milky_way.jpg` isn't in `Assets/_Project/Textures/` |
