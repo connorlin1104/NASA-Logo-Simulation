@@ -6,87 +6,75 @@ using UnityEngine.InputSystem;
 namespace NasaSim
 {
     /// <summary>
-    /// Three-mode camera for the astronaut, driving the scene's single Main Camera by transform (rather
+    /// Two-mode camera for the astronaut, driving the scene's single Main Camera by transform (rather
     /// than adding extra Cameras, which would duplicate the AudioListener and cost a second render).
     ///
     /// <list type="bullet">
-    /// <item><b>ThirdPerson</b> - orbits behind the astronaut. Best view of the walk cycle and the stair climb.</item>
-    /// <item><b>FirstPerson</b> - sits at the head anchor; the mouse yaws the body, arms swing in view.</item>
-    /// <item><b>Overview</b> - hands the camera back to <see cref="SimulationManager.FrameCamera"/>, the
-    /// original top-down framing of the logo. Set once on entry, then left alone so the two never fight
-    /// over the transform.</item>
+    /// <item><b>FirstPerson</b> (default) - the visor view at the head anchor. The mouse yaws the BODY;
+    /// pitch stays on the camera. This is the walking mode.</item>
+    /// <item><b>FlyCam</b> - a free camera: fly anywhere with WASD + Space/Ctrl (up/down), hold Shift to
+    /// go fast, scroll to scale the fly speed (which is how you "zoom" anywhere). The astronaut's input
+    /// is disabled while flying, so E/W/A/S/D never leak into the character.</item>
     /// </list>
     ///
-    /// Uses <c>Time.unscaledDeltaTime</c> throughout - see <see cref="AstronautController"/> for why.
+    /// C toggles between the two. Uses <c>Time.unscaledDeltaTime</c> throughout - see
+    /// <see cref="AstronautController"/> for why.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class AstronautCameraRig : MonoBehaviour
     {
-        public enum ViewMode { ThirdPerson, FirstPerson, Overview }
+        public enum ViewMode { FirstPerson, FlyCam }
 
         [Header("Targets")]
         public AstronautController astronaut;
         [Tooltip("Drives the first-person arm pose so the arms swing into view in the visor camera. " +
                  "Auto-found from the astronaut if left empty; survives the FBX swap.")]
         public AstronautLocomotionVisual locomotion;
-        [Tooltip("Orbit centre for third person (chest/shoulder height). Survives the FBX swap.")]
-        public Transform cameraPivot;
         [Tooltip("Eye position for first person. Survives the FBX swap (re-anchored to the head bone).")]
         public Transform headAnchor;
-        [Tooltip("Used by Overview mode to restore the logo framing. Auto-found if empty.")]
-        public SimulationManager simulationManager;
 
         [Header("Mode")]
-        public ViewMode mode = ViewMode.ThirdPerson;
-        [Tooltip("Cycles ThirdPerson -> FirstPerson -> Overview.")]
+        public ViewMode mode = ViewMode.FirstPerson;
+        [Tooltip("C toggles FirstPerson <-> FlyCam.")]
         public bool enableModeKey = true;
 
         [Header("Look")]
         [Min(0f)] public float mouseSensitivity = 0.12f;
         public bool invertY = false;
-        [Tooltip("Third-person pitch range. Negative looks down from above.")]
-        public float minPitch = -35f;
-        public float maxPitch = 70f;
         [Tooltip("First-person pitch range.")]
         public float minPitchFirstPerson = -80f;
         public float maxPitchFirstPerson = 80f;
-
-        [Header("Third person")]
-        [Min(0.5f)] public float distance = 2f;
-        [Tooltip("Extra height above the pivot, before pitch is applied.")]
-        public float shoulderHeight = 0.3f;
-        [Tooltip("How quickly the camera catches up to the astronaut. 0 = rigid.")]
-        [Min(0f)] public float followSmoothing = 12f;
-        [Tooltip("Pull the camera in when geometry (railings, dome, stairs) would come between it and the astronaut.")]
-        public bool collideWithGeometry = true;
-        [Min(0.01f)] public float collisionRadius = 0.25f;
-        [Tooltip("Layers the camera collides against. Exclude the astronaut's own layer.")]
-        public LayerMask collisionMask = ~0;
 
         [Header("First person")]
         public float firstPersonNearClip = 0.05f;
         public Vector3 firstPersonOffset = new Vector3(0f, 0f, 0.06f);
 
+        [Header("Fly cam")]
+        [Min(0.1f)] public float flySpeed = 8f;
+        [Tooltip("Hold Left Shift to multiply the fly speed.")]
+        [Min(1f)] public float flyFastMultiplier = 4f;
+        [Tooltip("Each scroll notch multiplies/divides the fly speed by this — scroll up to move (and " +
+                 "therefore zoom) faster, scroll down for fine, slow framing.")]
+        [Min(1.01f)] public float flySpeedScrollFactor = 1.15f;
+        [Min(0.01f)] public float flyMinSpeed = 0.5f;
+        [Min(1f)] public float flyMaxSpeed = 100f;
+
         [Header("Cursor")]
-        [Tooltip("Lock and hide the cursor in the walking modes. Press Escape to release it (Unity does " +
-                 "this for you in the editor); click the Game view to re-lock.")]
+        [Tooltip("Lock and hide the cursor while a camera mode is using mouse look. Press Escape to " +
+                 "release it (Unity does this for you in the editor); click the Game view to re-lock.")]
         public bool lockCursorWhileWalking = true;
 
         Camera _cam;
         float _yaw;
         float _pitch;
         float _defaultNearClip;
-        Vector3 _smoothedPivot;
-        bool _pivotInitialised;
         ViewMode _appliedMode = (ViewMode)(-1);
-        readonly RaycastHit[] _hits = new RaycastHit[16];
 
         void Awake()
         {
             _cam = GetComponent<Camera>();
             if (_cam == null) _cam = Camera.main;
             if (_cam != null) _defaultNearClip = _cam.nearClipPlane;
-            if (simulationManager == null) simulationManager = FindAnyObjectByType<SimulationManager>();
             if (astronaut == null) astronaut = FindAnyObjectByType<AstronautController>();
             if (locomotion == null && astronaut != null)
                 locomotion = astronaut.GetComponentInChildren<AstronautLocomotionVisual>();
@@ -94,7 +82,7 @@ namespace NasaSim
             if (astronaut != null)
             {
                 _yaw = astronaut.transform.eulerAngles.y;
-                _pitch = 15f;
+                _pitch = 5f;
             }
         }
 
@@ -110,22 +98,24 @@ namespace NasaSim
         void Update()
         {
             if (enableModeKey && ModeKeyPressed())
-                EnterMode((ViewMode)(((int)mode + 1) % 3));
+                EnterMode(mode == ViewMode.FirstPerson ? ViewMode.FlyCam : ViewMode.FirstPerson);
 
-            if (mode != ViewMode.Overview)
-                ReadLook();
+            ReadLook();
         }
 
         // LateUpdate so the camera follows the position the astronaut reached this frame (no lag/jitter).
         void LateUpdate()
         {
-            if (_cam == null || astronaut == null) return;
+            if (_cam == null) return;
 
             switch (mode)
             {
-                case ViewMode.ThirdPerson: UpdateThirdPerson(); break;
-                case ViewMode.FirstPerson: UpdateFirstPerson(); break;
-                // Overview: deliberately untouched. SimulationManager.FrameCamera placed it on entry.
+                case ViewMode.FirstPerson:
+                    if (astronaut != null) UpdateFirstPerson();
+                    break;
+                case ViewMode.FlyCam:
+                    UpdateFlyCam();
+                    break;
             }
         }
 
@@ -144,36 +134,33 @@ namespace NasaSim
             if (locomotion != null)
                 locomotion.firstPerson = (next == ViewMode.FirstPerson);
 
+            // The fly cam owns the input while active: freeze the astronaut so WASD flies the camera
+            // instead of walking the character (and the interaction sensor hides its prompt).
             if (astronaut != null)
+                astronaut.enableInput = (next == ViewMode.FirstPerson);
+
+            if (next == ViewMode.FirstPerson && astronaut != null)
             {
-                // In first person the mouse yaws the BODY; in third person it orbits the camera and the
-                // body turns to face travel instead.
-                astronaut.bodyRelative = (next == ViewMode.FirstPerson);
-                astronaut.cameraTransform = (_cam != null) ? _cam.transform : null;
-
-                if (next == ViewMode.FirstPerson)
-                {
-                    // Carry the orbit yaw over to the body so entering FP doesn't snap the view sideways.
-                    _yaw = astronaut.transform.eulerAngles.y;
-                    _pitch = Mathf.Clamp(_pitch, minPitchFirstPerson, maxPitchFirstPerson);
-                }
-                else if (next == ViewMode.ThirdPerson)
-                {
-                    _pitch = Mathf.Clamp(_pitch, minPitch, maxPitch);
-                    _pivotInitialised = false;   // snap rather than smear in from the last mode's position
-                }
+                // Carry the fly yaw over to the body so returning to FP doesn't snap the view sideways.
+                astronaut.transform.rotation = Quaternion.Euler(0f, _yaw, 0f);
+                _pitch = Mathf.Clamp(_pitch, minPitchFirstPerson, maxPitchFirstPerson);
             }
-
-            if (next == ViewMode.Overview && simulationManager != null)
-                simulationManager.FrameCamera();   // reuse the existing logo framing; set once
+            else if (next == ViewMode.FlyCam)
+            {
+                // Seed from the camera's current pose so switching never snaps the view.
+                Vector3 e = transform.eulerAngles;
+                _yaw = e.y;
+                _pitch = Mathf.Clamp(NormalizePitch(e.x), -89f, 89f);
+            }
 
             ApplyCursorState();
         }
 
+        static float NormalizePitch(float eulerX) => eulerX > 180f ? eulerX - 360f : eulerX;
+
         void ApplyCursorState()
         {
-            bool walking = mode != ViewMode.Overview;
-            if (!lockCursorWhileWalking || !walking)
+            if (!lockCursorWhileWalking)
             {
                 Cursor.lockState = CursorLockMode.None;
                 Cursor.visible = true;
@@ -183,64 +170,6 @@ namespace NasaSim
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible = false;
             }
-        }
-
-        void UpdateThirdPerson()
-        {
-            Transform pivotT = cameraPivot != null ? cameraPivot : astronaut.transform;
-            Vector3 pivot = pivotT.position + Vector3.up * shoulderHeight;
-
-            float dt = Time.unscaledDeltaTime;
-            if (!_pivotInitialised || followSmoothing <= 0f || dt <= 0f)
-            {
-                _smoothedPivot = pivot;
-                _pivotInitialised = true;
-            }
-            else
-            {
-                _smoothedPivot = Vector3.Lerp(_smoothedPivot, pivot, 1f - Mathf.Exp(-followSmoothing * dt));
-            }
-
-            Quaternion orbit = Quaternion.Euler(_pitch, _yaw, 0f);
-            Vector3 desired = _smoothedPivot + orbit * (Vector3.back * distance);
-
-            if (collideWithGeometry)
-            {
-                Vector3 toCam = desired - _smoothedPivot;
-                float len = toCam.magnitude;
-                if (len > 1e-4f)
-                {
-                    float blocked = NearestBlockingDistance(_smoothedPivot, toCam / len, len);
-                    if (blocked >= 0f)
-                        desired = _smoothedPivot + (toCam / len) * Mathf.Max(0.15f, blocked);
-                }
-            }
-
-            _cam.transform.SetPositionAndRotation(desired, orbit);
-        }
-
-        /// <summary>
-        /// Nearest obstruction between the pivot and the camera, or -1 if the view is clear. The cast
-        /// STARTS INSIDE the astronaut's own CharacterController, so self-hits (and zero-distance
-        /// overlap hits, which Unity reports inconsistently) must be filtered out explicitly - otherwise
-        /// the camera would slam into the astronaut's back on the first frame.
-        /// </summary>
-        float NearestBlockingDistance(Vector3 origin, Vector3 dir, float maxDistance)
-        {
-            int count = Physics.SphereCastNonAlloc(origin, collisionRadius, dir, _hits, maxDistance,
-                                                   collisionMask, QueryTriggerInteraction.Ignore);
-            Transform self = astronaut != null ? astronaut.transform : null;
-            float best = -1f;
-
-            for (int i = 0; i < count; i++)
-            {
-                var h = _hits[i];
-                if (h.collider == null) continue;
-                if (h.distance <= 1e-4f) continue;                                  // overlapping at the origin
-                if (self != null && h.collider.transform.IsChildOf(self)) continue; // the astronaut itself
-                if (best < 0f || h.distance < best) best = h.distance;
-            }
-            return best;
         }
 
         void UpdateFirstPerson()
@@ -253,6 +182,19 @@ namespace NasaSim
 
             Quaternion look = Quaternion.Euler(_pitch, _yaw, 0f);
             _cam.transform.SetPositionAndRotation(head.position + look * firstPersonOffset, look);
+        }
+
+        void UpdateFlyCam()
+        {
+            float dt = Time.unscaledDeltaTime;
+            Quaternion look = Quaternion.Euler(_pitch, _yaw, 0f);
+
+            Vector3 move = ReadFlyMove();                       // x strafe, y world up/down, z forward
+            Vector3 delta = look * new Vector3(move.x, 0f, move.z) + Vector3.up * move.y;
+            if (delta.sqrMagnitude > 1f) delta.Normalize();
+
+            float speed = flySpeed * (FastHeld() ? flyFastMultiplier : 1f);
+            _cam.transform.SetPositionAndRotation(_cam.transform.position + delta * speed * dt, look);
         }
 
         // ---------------------------------------------------------------- input
@@ -275,7 +217,45 @@ namespace NasaSim
             _pitch += invertY ? d.y : -d.y;
             _pitch = (mode == ViewMode.FirstPerson)
                 ? Mathf.Clamp(_pitch, minPitchFirstPerson, maxPitchFirstPerson)
-                : Mathf.Clamp(_pitch, minPitch, maxPitch);
+                : Mathf.Clamp(_pitch, -89f, 89f);
+
+            // Scroll scales the fly speed (clamped exponent: trackpads report large per-frame deltas).
+            if (mode == ViewMode.FlyCam)
+            {
+                float scroll = mouse.scroll.ReadValue().y;
+                if (Mathf.Abs(scroll) > 0.01f)
+                    flySpeed = Mathf.Clamp(
+                        flySpeed * Mathf.Pow(flySpeedScrollFactor, Mathf.Clamp(scroll, -3f, 3f)),
+                        flyMinSpeed, flyMaxSpeed);
+            }
+#endif
+        }
+
+        Vector3 ReadFlyMove()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var kb = Keyboard.current;
+            if (kb == null) return Vector3.zero;
+            float x = 0f, y = 0f, z = 0f;
+            if (kb.aKey.isPressed || kb.leftArrowKey.isPressed) x -= 1f;
+            if (kb.dKey.isPressed || kb.rightArrowKey.isPressed) x += 1f;
+            if (kb.sKey.isPressed || kb.downArrowKey.isPressed) z -= 1f;
+            if (kb.wKey.isPressed || kb.upArrowKey.isPressed) z += 1f;
+            if (kb.spaceKey.isPressed) y += 1f;
+            if (kb.leftCtrlKey.isPressed) y -= 1f;
+            return new Vector3(x, y, z);
+#else
+            return Vector3.zero;
+#endif
+        }
+
+        bool FastHeld()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var kb = Keyboard.current;
+            return kb != null && kb.leftShiftKey.isPressed;
+#else
+            return false;
 #endif
         }
 

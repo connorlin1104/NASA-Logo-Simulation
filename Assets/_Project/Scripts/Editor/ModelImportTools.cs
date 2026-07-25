@@ -281,6 +281,51 @@ namespace NasaSim.EditorTools
             return best;
         }
 
+        /// <summary>
+        /// Wire the two FRONT Axle_* pivots (largest tractor-local +Z) as steer wheels, so the realistic
+        /// steering model visually yaws them through corners. Works because <c>SpinWheels</c> rebuilds
+        /// each wheel mesh's pose from its axle's CURRENT rotation every frame — yawing the axle steers
+        /// the wheel with no extra wiring.
+        /// </summary>
+        [MenuItem("Tools/NASA Sim/Tractor/Wire Steer Wheels From Axles")]
+        public static void WireSteerWheelsFromAxles()
+        {
+            var follower = Object.FindAnyObjectByType<TractorPathFollower>();
+            if (follower == null)
+            {
+                Debug.LogWarning("[ModelImportTools] No Tractor Path Follower in the scene.");
+                return;
+            }
+
+            var candidates = new List<(Transform axle, float z)>();
+            if (follower.wheels != null)
+                foreach (var w in follower.wheels)
+                    if (w?.axle != null)
+                        candidates.Add((w.axle, follower.transform.InverseTransformPoint(w.axle.position).z));
+
+            if (candidates.Count < 2)
+            {
+                Debug.LogWarning("[ModelImportTools] Fewer than two wheels with Axle_* pivots are wired — " +
+                                 "run Tractor > Swap In Selected FBX or Populate Wheels From Selection first.",
+                                 follower);
+                return;
+            }
+
+            candidates.Sort((a, b) => b.z.CompareTo(a.z));      // largest local +Z = the nose
+            Undo.RecordObject(follower, "Wire Steer Wheels");
+            follower.steerWheels = new[] { candidates[0].axle, candidates[1].axle };
+            EditorUtility.SetDirty(follower);
+            EditorSceneManager.MarkSceneDirty(follower.gameObject.scene);
+
+            string ambiguity = "";
+            if (candidates.Count > 2 && Mathf.Abs(candidates[1].z - candidates[2].z) < 0.05f)
+                ambiguity = "\n  WARNING: front/rear is ambiguous (axles share nearly the same Z). If the " +
+                            "model faces sideways, run Tractor > Rotate Model 90 first, then re-run this.";
+
+            Debug.Log($"[ModelImportTools] Steer wheels wired: {candidates[0].axle.name}, " +
+                      $"{candidates[1].axle.name} (front pair by local +Z).{ambiguity}", follower);
+        }
+
         [MenuItem("Tools/NASA Sim/Tractor/Rotate Model 90 (fix facing)")]
         public static void RotateTractorModel()
         {
@@ -523,6 +568,15 @@ namespace NasaSim.EditorTools
                 return;
             }
 
+            WireUp(target);
+        }
+
+        /// <summary>
+        /// Core prefix wiring (COL_/STAIR_/NOCOL_/BALCONY_/SPAWN_), extracted from the menu item so other
+        /// tools (<see cref="BiodomeFixTools"/>, the full-vision setup chain) can call it programmatically.
+        /// </summary>
+        public static void WireUp(GameObject target)
+        {
             Undo.RegisterFullObjectHierarchyUndo(target, "Wire Up Biodome");
 
             var all = target.GetComponentsInChildren<Transform>(true);

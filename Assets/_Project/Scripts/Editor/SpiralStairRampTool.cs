@@ -31,8 +31,11 @@ namespace NasaSim.EditorTools
         float surfaceLift = 0.1f;     // raise the ramp this far above the tread line (m)
         float thickness = 0.3f;       // ramp slab thickness (m)
         int segmentsPerTurn = 48;     // smoothness
+        bool disableTreadColliders = true;  // the ~per-tread MeshColliders are what cause snagging
+        string _prefsLoadedFor;       // last-used settings persist per staircase name (EditorPrefs)
 
         const string DataDir = "Assets/_Project/Data";
+        const string PrefsPrefix = "NasaSim.SpiralRamp.";
 
         [MenuItem("Tools/NASA Sim/Biodome/Add Spiral Stair Ramp")]
         public static void Open()
@@ -55,6 +58,13 @@ namespace NasaSim.EditorTools
             staircase = (GameObject)EditorGUILayout.ObjectField(
                 new GUIContent("Staircase", "The spiral stairs in the scene."),
                 staircase, typeof(GameObject), true);
+
+            // Recall the last-used settings for this particular staircase, so rebuilds are one click.
+            if (staircase != null && _prefsLoadedFor != staircase.name)
+            {
+                LoadPrefs(staircase.name);
+                _prefsLoadedFor = staircase.name;
+            }
 
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Shape (a bounding box can't guess these)", EditorStyles.boldLabel);
@@ -80,6 +90,12 @@ namespace NasaSim.EditorTools
                 new GUIContent("Surface lift", "Raise the ramp above the treads (m)."), surfaceLift, 0f, 0.5f);
             thickness = EditorGUILayout.Slider(
                 new GUIContent("Thickness", "Ramp slab thickness (m)."), thickness, 0.05f, 1f);
+            disableTreadColliders = EditorGUILayout.Toggle(
+                new GUIContent("Disable tread colliders",
+                               "Turn OFF the staircase's own colliders so the CharacterController rides " +
+                               "only this smooth helicoid. Per-tread MeshColliders are what cause the " +
+                               "snag-and-jitter climb; the ramp replaces them entirely."),
+                disableTreadColliders);
 
             EditorGUILayout.Space();
             using (new EditorGUI.DisabledScope(staircase == null))
@@ -142,6 +158,19 @@ namespace NasaSim.EditorTools
             col.convex = false;              // a corkscrew is not convex; fine for a static walkable
             col.sharedMesh = mesh;
 
+            int disabled = 0;
+            if (disableTreadColliders)
+            {
+                foreach (var c in staircase.GetComponentsInChildren<Collider>(true))
+                {
+                    if (!c.enabled) continue;
+                    Undo.RecordObject(c, "Disable Tread Colliders");
+                    c.enabled = false;
+                    disabled++;
+                }
+            }
+            SavePrefs(staircase.name);
+
             EditorSceneManager.MarkSceneDirty(rampGo.scene);
             Selection.activeGameObject = rampGo;
 
@@ -152,8 +181,10 @@ namespace NasaSim.EditorTools
 
             string msg = $"[SpiralRamp] Helical ramp over '{staircase.name}': {turns:0.##} turn(s), " +
                          $"rise {topY - bottomY:0.0} m, radius {innerR:0.0}-{outerR:0.0} m, " +
-                         $"~{pitch:0} deg pitch. Select it to see the wireframe; adjust Turns/Clockwise/" +
-                         "Start Angle and rebuild to line it up.";
+                         $"~{pitch:0} deg pitch" +
+                         (disabled > 0 ? $", {disabled} tread collider(s) disabled (the ramp does all collision now)" : "") +
+                         ". Select it to see the wireframe; adjust Turns/Clockwise/" +
+                         "Start Angle and rebuild to line it up (settings are remembered per staircase).";
             if (pitch > 50f)
                 Debug.LogWarning(msg + "\n  Pitch exceeds the astronaut's 50 deg Slope Limit - add more " +
                                  "Turns (shallower), widen the radius, or raise slopeLimit in " +
@@ -186,7 +217,16 @@ namespace NasaSim.EditorTools
             }
 
             var tris = new List<int>();
-            void Quad(int a, int b, int c, int d) { tris.Add(a); tris.Add(b); tris.Add(c); tris.Add(a); tris.Add(c); tris.Add(d); }
+            // Winding must follow the wind direction: a NON-CONVEX MeshCollider is single-sided (PhysX
+            // cooks faces from triangle winding; RecalculateNormals is render-only). Emitting the
+            // clockwise quad order on a counterclockwise ramp would build it inside-out and the
+            // CharacterController would fall straight through.
+            bool flipWinding = !clockwise;
+            void Quad(int a, int b, int c, int d)
+            {
+                if (flipWinding) { tris.Add(a); tris.Add(c); tris.Add(b); tris.Add(a); tris.Add(d); tris.Add(c); }
+                else { tris.Add(a); tris.Add(b); tris.Add(c); tris.Add(a); tris.Add(c); tris.Add(d); }
+            }
 
             for (int r = 0; r < rings - 1; r++)
             {
@@ -196,7 +236,7 @@ namespace NasaSim.EditorTools
                 Quad(a + 1, a + 3, b + 3, b + 1);   // outer wall
                 Quad(a + 0, b + 0, b + 2, a + 2);   // inner wall
             }
-            // End caps so the corkscrew is a closed solid (winding is irrelevant for a collider).
+            // End caps so the corkscrew is a closed solid.
             Quad(0, 1, 3, 2);
             int last = (rings - 1) * 4;
             Quad(last + 0, last + 1, last + 3, last + 2);
@@ -208,6 +248,32 @@ namespace NasaSim.EditorTools
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
             return mesh;
+        }
+
+        void LoadPrefs(string name)
+        {
+            string k = PrefsPrefix + name + ".";
+            turns = EditorPrefs.GetFloat(k + "turns", turns);
+            clockwise = EditorPrefs.GetBool(k + "clockwise", clockwise);
+            startAngleDeg = EditorPrefs.GetFloat(k + "startAngle", startAngleDeg);
+            innerRadius = EditorPrefs.GetFloat(k + "innerRadius", innerRadius);
+            outerRadiusScale = EditorPrefs.GetFloat(k + "outerRadiusScale", outerRadiusScale);
+            surfaceLift = EditorPrefs.GetFloat(k + "surfaceLift", surfaceLift);
+            thickness = EditorPrefs.GetFloat(k + "thickness", thickness);
+            disableTreadColliders = EditorPrefs.GetBool(k + "disableTreads", disableTreadColliders);
+        }
+
+        void SavePrefs(string name)
+        {
+            string k = PrefsPrefix + name + ".";
+            EditorPrefs.SetFloat(k + "turns", turns);
+            EditorPrefs.SetBool(k + "clockwise", clockwise);
+            EditorPrefs.SetFloat(k + "startAngle", startAngleDeg);
+            EditorPrefs.SetFloat(k + "innerRadius", innerRadius);
+            EditorPrefs.SetFloat(k + "outerRadiusScale", outerRadiusScale);
+            EditorPrefs.SetFloat(k + "surfaceLift", surfaceLift);
+            EditorPrefs.SetFloat(k + "thickness", thickness);
+            EditorPrefs.SetBool(k + "disableTreads", disableTreadColliders);
         }
 
         static bool TryGetBounds(GameObject go, out Bounds bounds)

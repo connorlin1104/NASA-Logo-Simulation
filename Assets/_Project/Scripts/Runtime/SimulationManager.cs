@@ -57,14 +57,24 @@ namespace NasaSim
         void ApplyTrailWidth()
         {
             if (trailWidthFraction <= 0f) return;
-            var vis = mowingVisual != null ? mowingVisual : FindAnyObjectByType<MowingVisual_Trail>();
             WaypointPath path = loader != null ? (loader.Current ?? loader.Load()) : null;
-            if (vis == null || path == null || path.IsEmpty) return;
+            if (path == null || path.IsEmpty) return;
             float size = Mathf.Max(path.Bounds.size.x, path.Bounds.size.z);
-            vis.width = Mathf.Max(0.01f, size * trailWidthFraction);
-            // Lay trail vertices at roughly half the ribbon width so corners read as smooth curves rather
-            // than faceted "choppy" segments, while staying bounded on long paths. Scales with the logo.
-            vis.minVertexDistance = Mathf.Clamp(vis.width * 0.5f, 0.05f, 0.5f);
+
+            var vis = mowingVisual != null ? mowingVisual : FindAnyObjectByType<MowingVisual_Trail>();
+            if (vis != null)
+            {
+                vis.width = Mathf.Max(0.01f, size * trailWidthFraction);
+                // Lay trail vertices at roughly half the ribbon width so corners read as smooth curves rather
+                // than faceted "choppy" segments, while staying bounded on long paths. Scales with the logo.
+                vis.minVertexDistance = Mathf.Clamp(vis.width * 0.5f, 0.05f, 0.5f);
+            }
+
+            // The grass/flower visual mows a slightly wider swath than the ribbon so clumps at the
+            // ribbon's edge don't poke through the cut mark.
+            var grass = FindAnyObjectByType<MowingVisual_GrassAndFlowers>();
+            if (grass != null)
+                grass.brushWidth = Mathf.Max(0.05f, size * trailWidthFraction * 1.5f);
         }
 
         void Update()

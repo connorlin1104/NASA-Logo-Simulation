@@ -16,6 +16,9 @@ namespace NasaSim
     {
         public enum EndBehavior { Stop, Loop, PingPong }
 
+        /// <summary>See <see cref="steeringMode"/>.</summary>
+        public enum SteeringMode { ExactPath, Realistic }
+
         /// <summary>How many wheels the visual list accepts.</summary>
         public const int MaxWheels = 4;
 
@@ -67,6 +70,32 @@ namespace NasaSim
         [Tooltip("Keep the tractor body at this Y so the logo lies on the floor plane.")]
         public float fixedY = 0f;
         public bool autoStart = true;
+
+        [Header("Steering model")]
+        [Tooltip("ExactPath: the original behaviour — the body is dragged straight at each waypoint and " +
+                 "the heading merely chases it, so tight corners crab-slide (but the trace is exact).\n\n" +
+                 "Realistic: a pure-pursuit unicycle — the body can only move along its heading, the " +
+                 "heading turns toward a look-ahead point at a capped rate, and it brakes for corners. " +
+                 "Natural arcs; rounds logo corners by well under ~0.3 m at the 40 m logo size.")]
+        public SteeringMode steeringMode = SteeringMode.Realistic;
+        [Tooltip("Look-ahead distance at low speed (m). Smaller = tighter corner tracking.")]
+        [Min(0.1f)] public float lookAheadMin = 0.6f;
+        [Tooltip("Look-ahead distance approached at ~10 m/s (m). Larger = smoother at speed.")]
+        [Min(0.1f)] public float lookAheadMax = 1.2f;
+        [Tooltip("Steering cap: how many degrees the heading may change per metre travelled. " +
+                 "60°/m ≈ a ~1 m minimum turning radius.")]
+        [Min(1f)] public float maxYawPerMeterDeg = 60f;
+        [Tooltip("Heading error (deg) at which the tractor slows to Corner Speed Floor.")]
+        [Min(1f)] public float cornerSlowdownAngle = 50f;
+        [Range(0.1f, 1f)] public float cornerSpeedFloor = 0.35f;
+        [Tooltip("How strongly the body is pulled sideways back onto the path (1/m). Prevents drift " +
+                 "without visible side-sliding.")]
+        [Min(0f)] public float crossTrackGain = 2f;
+        [Tooltip("Visual only: wheelbase used to convert path curvature into a front-wheel steer angle.")]
+        [Min(0.1f)] public float wheelbase = 1.6f;
+        [Tooltip("Visual only: how fast the front wheels swing to their target steer angle (deg per " +
+                 "second of path time).")]
+        [Min(1f)] public float steerSmoothing = 360f;
 
         [Header("Wheels (visual)")]
         [Tooltip("Up to 4 wheels, each with its own mesh and its own pivot/axle. Entries are independent: " +
@@ -130,6 +159,17 @@ namespace NasaSim
         bool _running;
         bool _penDown;
 
+        // ---- Realistic-steering state (arc-length parameterisation of the same polyline) ----
+        float[] _cumLen;         // arc length at each waypoint, flattened to the ground plane
+        float _totalLen;
+        float _s;                // current arc-length position along the path
+        float _sDir = 1f;        // +1 forward, -1 reverse (ping-pong)
+        float _heading;          // body yaw in degrees; position may ONLY advance along this
+        int _edgeHint;           // amortised O(1) segment lookup (s moves smoothly)
+        int _lastCrossedIndex;   // for onWaypointReached
+        float _steerAngle;       // smoothed visual front-wheel angle
+        Quaternion[] _steerRest; // steer wheels' rest local rotations (so steering composes, not stomps)
+
         public WaypointPath Path => _path;
         public bool IsRunning => _running;
 
@@ -158,8 +198,22 @@ namespace NasaSim
             _index = 1;                       // first drive target
             _running = true;
 
-            _penDown = false;                 // force a fresh transition on the next EvaluatePen
-            EvaluatePenForTarget();           // SetPen seeds the mower at the current brush position
+            _penDown = false;                 // force a fresh transition on the next pen evaluation
+            if (steeringMode == SteeringMode.Realistic)
+            {
+                BuildArcLength();
+                _s = 0f;
+                _sDir = 1f;
+                _edgeHint = 0;
+                _lastCrossedIndex = 0;
+                _steerAngle = 0f;
+                SnapToArc();
+                UpdatePenFromArc();           // SetPen seeds the mower at the current brush position
+            }
+            else
+            {
+                EvaluatePenForTarget();       // SetPen seeds the mower at the current brush position
+            }
             onStarted?.Invoke();
         }
 
@@ -174,6 +228,14 @@ namespace NasaSim
         /// </summary>
         void FitModel()
         {
+            // Straighten the steering with the PREVIOUS rest pose FIRST (no-op on the very first run),
+            // THEN capture rest poses from the centred axles. The other order would re-capture a
+            // mid-corner steer angle as the new rest — every R-restart taken in a corner would bake
+            // another permanent toe offset into the front wheels.
+            ApplySteerAngle(0f);
+            _steerAngle = 0f;
+            ResolveSteerWheels();
+
             ResolveWheels();
 
             // Drop the visual so its lowest point rests on the ground (root.y - fixedY).
@@ -353,6 +415,52 @@ namespace NasaSim
         {
             if (!_running || _path == null) return;
 
+            if (steeringMode == SteeringMode.Realistic)
+            {
+                // The mode is a live Inspector switch: build the arc-length state on demand, seeded
+                // from the current pose, when the run began in ExactPath mode.
+                if (_cumLen == null || _cumLen.Length != _path.Count)
+                    InitRealisticFromCurrentPose();
+                UpdateRealistic();
+            }
+            else
+            {
+                // Live switch back: re-derive the waypoint target from the arc position so the tractor
+                // continues from here instead of driving back toward the start.
+                if (_cumLen != null)
+                {
+                    _index = Mathf.Clamp(EdgeAtArc(_s) + 1, 1, _path.Count - 1);
+                    _cumLen = null;               // stale now; rebuilt on demand if switched again
+                }
+                UpdateExact();
+            }
+        }
+
+        /// <summary>Seed the realistic-steering state mid-run (mode switched while playing).</summary>
+        void InitRealisticFromCurrentPose()
+        {
+            BuildArcLength();
+            _edgeHint = 0;
+            _sDir = 1f;
+            _heading = transform.eulerAngles.y;
+            _steerAngle = 0f;
+
+            // One-time global projection of the current position onto the path.
+            Vector3 pos = Flat(transform.position);
+            float bestS = 0f, bestSq = float.MaxValue;
+            for (int e = 0; e < _path.Count - 1; e++)
+            {
+                float sHere = ClosestOnEdge(pos, e, out float dSq);
+                if (dSq < bestSq) { bestSq = dSq; bestS = sHere; }
+            }
+            _s = bestS;
+            _lastCrossedIndex = EdgeAtArc(_s);
+        }
+
+        // ================================================================== exact path (original)
+
+        void UpdateExact()
+        {
             float budget = moveSpeed * Time.deltaTime;
             float invSpeed = moveSpeed > 1e-6f ? 1f / moveSpeed : 0f;
             float totalMoved = 0f;
@@ -415,6 +523,277 @@ namespace NasaSim
                 transform.position = new Vector3(p.x, fixedY, p.z);
 
             SpinWheels(totalMoved);
+        }
+
+        // ================================================================== realistic steering
+        //
+        // A pure-pursuit unicycle: the body may only advance along its heading; the heading turns toward
+        // a look-ahead point on the path at a capped rate (degrees per METRE travelled, so behaviour is
+        // identical at any Time.timeScale); speed drops for large heading errors (corner braking); and a
+        // clamped lateral pull keeps cross-track error from accumulating. Sub-steps are capped at 0.25 m
+        // so a 16x fast-forward integrates the same curve as 1x. With the default 0.6 m look-ahead a 90°
+        // logo corner rounds by ~0.15 m — invisible at the 40 m logo — and SteeringMode.ExactPath brings
+        // the original waypoint-exact behaviour back with one Inspector click.
+
+        const float MaxSubStep = 0.25f;
+
+        void UpdateRealistic()
+        {
+            float budget = moveSpeed * Time.deltaTime;
+            float invSpeed = moveSpeed > 1e-6f ? 1f / moveSpeed : 0f;
+            float totalMoved = 0f;
+            int guard = 0;
+
+            while (_running && budget > 1e-6f && guard++ < 512)
+            {
+                if (teleportOnPenUp && !EdgePenDown(EdgeAtArc(_s)))
+                {
+                    if (!SkipToNextPenDown()) break;
+                    continue;                 // the jump consumes no budget
+                }
+
+                float stepRaw = Mathf.Min(budget, MaxSubStep);
+                float lookAhead = Mathf.Lerp(lookAheadMin, lookAheadMax, moveSpeed * 0.1f);
+
+                Vector3 pos = Flat(transform.position);
+                Vector3 target = PointAtArc(_s + lookAhead * _sDir);
+                Vector3 to = target - pos;
+                float desired = to.sqrMagnitude > 1e-8f ? Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg : _heading;
+                float err = Mathf.DeltaAngle(_heading, desired);
+
+                // Corner braking: the full raw step is consumed from the budget while less ground is
+                // covered — that IS the slowdown, without touching any timers.
+                float speedMul = Mathf.Lerp(1f, cornerSpeedFloor,
+                                            Mathf.Clamp01(Mathf.Abs(err) / cornerSlowdownAngle));
+                float step = stepRaw * speedMul;
+
+                float dYaw = Mathf.Clamp(err, -maxYawPerMeterDeg * step, maxYawPerMeterDeg * step);
+                _heading += dYaw;
+
+                Vector3 fwd = new Vector3(Mathf.Sin(_heading * Mathf.Deg2Rad), 0f,
+                                          Mathf.Cos(_heading * Mathf.Deg2Rad));
+                pos += fwd * step;            // position follows HEADING — no crab-sliding
+
+                // Advance the path parameter to the new position (monotonically — pen state and waypoint
+                // events key off it), then pull laterally toward the path so look-ahead corner cutting
+                // can never drift into a standing offset.
+                _s = ProjectOntoPath(pos, _s);
+                Vector3 lateral = Vector3.ClampMagnitude(PointAtArc(_s) - pos, crossTrackGain * step);
+                pos += new Vector3(lateral.x, 0f, lateral.z);
+
+                transform.SetPositionAndRotation(new Vector3(pos.x, fixedY, pos.z),
+                                                 Quaternion.Euler(0f, _heading, 0f));
+                ApplySteerFromCurvature(dYaw, step, invSpeed);
+
+                totalMoved += step;
+                budget -= stepRaw;
+
+                FireCrossedWaypoints();
+                UpdatePenFromArc();
+                SampleMower();
+
+                bool atEnd = _sDir > 0 ? _s >= _totalLen - 1e-3f : _s <= 1e-3f;
+                if (atEnd && !HandleEndRealistic()) break;
+            }
+
+            Vector3 p = transform.position;
+            if (!Mathf.Approximately(p.y, fixedY))
+                transform.position = new Vector3(p.x, fixedY, p.z);
+
+            SpinWheels(totalMoved);
+        }
+
+        void BuildArcLength()
+        {
+            int n = _path.Count;
+            _cumLen = new float[n];
+            float total = 0f;
+            Vector3 prev = Flat(_path.Points[0].position);
+            for (int i = 1; i < n; i++)
+            {
+                Vector3 p = Flat(_path.Points[i].position);
+                total += Vector3.Distance(prev, p);
+                _cumLen[i] = total;
+                prev = p;
+            }
+            _totalLen = total;
+        }
+
+        /// <summary>Index i of the edge between waypoints i and i+1 containing arc position s. The hint
+        /// makes this amortised O(1) because s only moves smoothly.</summary>
+        int EdgeAtArc(float s)
+        {
+            int n = _path.Count;
+            if (s <= 0f) { _edgeHint = 0; return 0; }
+            if (s >= _totalLen) { _edgeHint = n - 2; return n - 2; }
+            int i = Mathf.Clamp(_edgeHint, 0, n - 2);
+            while (i > 0 && _cumLen[i] > s) i--;
+            while (i < n - 2 && _cumLen[i + 1] < s) i++;
+            _edgeHint = i;
+            return i;
+        }
+
+        /// <summary>Pen state of an edge — identified by its higher endpoint, matching
+        /// <see cref="EvaluatePenForTarget"/>'s convention.</summary>
+        bool EdgePenDown(int edge) => _path.Points[Mathf.Clamp(edge + 1, 1, _path.Count - 1)].penDown;
+
+        Vector3 PointAtArc(float s)
+        {
+            s = Mathf.Clamp(s, 0f, _totalLen);
+            int i = EdgeAtArc(s);
+            float segLen = _cumLen[i + 1] - _cumLen[i];
+            float t = segLen > 1e-6f ? (s - _cumLen[i]) / segLen : 0f;
+            return Vector3.Lerp(Flat(_path.Points[i].position), Flat(_path.Points[i + 1].position), t);
+        }
+
+        /// <summary>
+        /// Arc position of the closest point on the path near sCur, searched a few metres in the travel
+        /// direction only, and never allowed to move backwards against it.
+        /// </summary>
+        float ProjectOntoPath(Vector3 pos, float sCur)
+        {
+            const float Window = 3f;
+            int n = _path.Count;
+            float bestS = sCur;
+            float bestSq = float.MaxValue;
+            int i = EdgeAtArc(sCur);
+
+            if (_sDir > 0)
+            {
+                float sEnd = Mathf.Min(_totalLen, sCur + Window);
+                for (; i < n - 1 && _cumLen[i] <= sEnd; i++)
+                {
+                    float sHere = ClosestOnEdge(pos, i, out float dSq);
+                    if (sHere >= sCur - 1e-4f && dSq < bestSq) { bestSq = dSq; bestS = sHere; }
+                }
+                return Mathf.Max(sCur, bestS);
+            }
+            else
+            {
+                float sEnd = Mathf.Max(0f, sCur - Window);
+                for (; i >= 0 && _cumLen[i + 1] >= sEnd; i--)
+                {
+                    float sHere = ClosestOnEdge(pos, i, out float dSq);
+                    if (sHere <= sCur + 1e-4f && dSq < bestSq) { bestSq = dSq; bestS = sHere; }
+                }
+                return Mathf.Min(sCur, bestS);
+            }
+        }
+
+        float ClosestOnEdge(Vector3 pos, int edge, out float distSq)
+        {
+            Vector3 a = Flat(_path.Points[edge].position);
+            Vector3 b = Flat(_path.Points[edge + 1].position);
+            Vector3 ab = b - a;
+            float len2 = ab.sqrMagnitude;
+            float t = len2 > 1e-8f ? Mathf.Clamp01(Vector3.Dot(pos - a, ab) / len2) : 0f;
+            Vector3 p = a + ab * t;
+            distSq = (p - pos).sqrMagnitude;
+            return _cumLen[edge] + (_cumLen[edge + 1] - _cumLen[edge]) * t;
+        }
+
+        void FireCrossedWaypoints()
+        {
+            if (_sDir > 0)
+            {
+                while (_lastCrossedIndex < _path.Count - 1 && _cumLen[_lastCrossedIndex + 1] <= _s + 1e-4f)
+                {
+                    _lastCrossedIndex++;
+                    onWaypointReached?.Invoke(_lastCrossedIndex);
+                }
+            }
+            else
+            {
+                while (_lastCrossedIndex > 0 && _cumLen[_lastCrossedIndex - 1] >= _s - 1e-4f)
+                {
+                    _lastCrossedIndex--;
+                    onWaypointReached?.Invoke(_lastCrossedIndex);
+                }
+            }
+        }
+
+        void UpdatePenFromArc() => SetPen(EdgePenDown(EdgeAtArc(_s)));
+
+        /// <summary>Jump the arc position across pen-up edges (teleportOnPenUp). Returns false at path end.</summary>
+        bool SkipToNextPenDown()
+        {
+            int n = _path.Count;
+            int i = EdgeAtArc(_s);
+            if (_sDir > 0)
+            {
+                while (i < n - 1 && !_path.Points[Mathf.Min(i + 1, n - 1)].penDown) i++;
+                if (i >= n - 1) return HandleEndRealistic();
+                // Nudge INTO the pen-down edge and point the hint at it. Landing exactly on
+                // _cumLen[i] would make EdgeAtArc tie-break back to the pen-up edge below, re-enter
+                // this method with identical state, and stall the tractor forever at the first gap.
+                _s = Mathf.Min(_cumLen[i] + 1e-3f, _cumLen[i + 1]);
+                _edgeHint = i;
+                _lastCrossedIndex = i;
+            }
+            else
+            {
+                while (i >= 0 && !_path.Points[i + 1].penDown) i--;
+                if (i < 0) return HandleEndRealistic();
+                _s = Mathf.Max(_cumLen[i + 1] - 1e-3f, _cumLen[i]);   // mirrored boundary nudge
+                _edgeHint = i;
+                _lastCrossedIndex = i + 1;
+            }
+            SnapToArc();
+            UpdatePenFromArc();
+            return true;
+        }
+
+        /// <summary>Place the body exactly on the path at _s, heading along it.</summary>
+        void SnapToArc()
+        {
+            Vector3 p = PointAtArc(_s);
+            Vector3 q = PointAtArc(_s + 0.25f * _sDir);
+            Vector3 d = q - p;
+            if (d.sqrMagnitude > 1e-8f)
+                _heading = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
+            transform.SetPositionAndRotation(new Vector3(p.x, fixedY, p.z),
+                                             Quaternion.Euler(0f, _heading, 0f));
+        }
+
+        bool HandleEndRealistic()
+        {
+            onCompleted?.Invoke();
+            switch (onComplete)
+            {
+                case EndBehavior.Loop:
+                    SetPen(false);            // lift before the wrap so no connector is drawn
+                    _s = 0f;
+                    _sDir = 1f;
+                    _edgeHint = 0;
+                    _lastCrossedIndex = 0;
+                    SnapToArc();
+                    UpdatePenFromArc();       // SetPen seeds the mower at the wrapped start position
+                    return true;
+
+                case EndBehavior.PingPong:
+                    SetPen(false);
+                    _sDir = -_sDir;
+                    _s = Mathf.Clamp(_s, 0f, _totalLen);
+                    _lastCrossedIndex = Mathf.Clamp(_lastCrossedIndex, 0, _path.Count - 1);
+                    UpdatePenFromArc();
+                    return true;
+
+                default: // Stop
+                    SetPen(false);
+                    _running = false;
+                    return false;
+            }
+        }
+
+        void ApplySteerFromCurvature(float dYawDeg, float step, float invSpeed)
+        {
+            if (steerWheels == null || steerWheels.Length == 0) return;
+            float curvature = step > 1e-5f ? dYawDeg * Mathf.Deg2Rad / step : 0f;   // 1/m
+            float target = Mathf.Clamp(Mathf.Atan(wheelbase * curvature) * Mathf.Rad2Deg,
+                                       -maxSteerAngleDeg, maxSteerAngleDeg);
+            // Smooth in "path time" (step / speed) so the swing rate is timeScale-independent.
+            _steerAngle = Mathf.MoveTowards(_steerAngle, target, steerSmoothing * step * invSpeed);
+            ApplySteerAngle(_steerAngle);
         }
 
         void SampleMower()
@@ -504,7 +883,11 @@ namespace NasaSim
         Vector3 MowerWorldPos()
         {
             Vector3 a = mowerAnchor.position;
-            int edgeHi = _dir > 0 ? _index : _index + 1;
+            int edgeHi;
+            if (steeringMode == SteeringMode.Realistic && _cumLen != null)
+                edgeHi = EdgeAtArc(_s) + 1;
+            else
+                edgeHi = _dir > 0 ? _index : _index + 1;
             edgeHi = Mathf.Clamp(edgeHi, 1, _path.Count - 1);
             return new Vector3(a.x, _path.Points[edgeHi].position.y, a.z);
         }
@@ -555,12 +938,30 @@ namespace NasaSim
             Vector3 local = transform.InverseTransformDirection(worldDir);
             float steer = Mathf.Clamp(Mathf.Atan2(local.x, Mathf.Max(0.001f, local.z)) * Mathf.Rad2Deg,
                                       -maxSteerAngleDeg, maxSteerAngleDeg);
-            for (int i = 0; i < steerWheels.Length; i++)
+            ApplySteerAngle(steer);
+        }
+
+        /// <summary>
+        /// Capture the steer wheels' rest local rotations so steering COMPOSES with them — the steer
+        /// wheels are usually the front Axle_* pivots, and writing raw Euler angles would stomp whatever
+        /// orientation they were authored with. Re-run at the start of every run (with the steering
+        /// centred first), so wheel meshes bind their spin pose against the un-steered axle.
+        /// </summary>
+        void ResolveSteerWheels()
+        {
+            int n = steerWheels != null ? steerWheels.Length : 0;
+            if (_steerRest == null || _steerRest.Length != n) _steerRest = new Quaternion[n];
+            for (int i = 0; i < n; i++)
+                if (steerWheels[i] != null) _steerRest[i] = steerWheels[i].localRotation;
+        }
+
+        void ApplySteerAngle(float steerDeg)
+        {
+            if (steerWheels == null || _steerRest == null) return;
+            int n = Mathf.Min(steerWheels.Length, _steerRest.Length);
+            for (int i = 0; i < n; i++)
                 if (steerWheels[i] != null)
-                {
-                    Vector3 e = steerWheels[i].localEulerAngles;
-                    steerWheels[i].localEulerAngles = new Vector3(e.x, steer, e.z);
-                }
+                    steerWheels[i].localRotation = _steerRest[i] * Quaternion.AngleAxis(steerDeg, Vector3.up);
         }
 
 #if UNITY_EDITOR

@@ -27,8 +27,6 @@ namespace NasaSim
         [Min(0f)] public float walkSpeed = 1.9f;
         [Tooltip("Hold Left Shift. A brisk 'speed walk on the moon', not a sprint.")]
         [Min(0f)] public float runSpeed = 3.4f;
-        [Tooltip("How fast the body turns to face the direction of travel (third-person only).")]
-        [Min(0f)] public float rotationSpeedDeg = 720f;
         [Tooltip("Acceleration/damping on the ground speed, so starts and stops aren't instant.")]
         [Min(0.01f)] public float acceleration = 12f;
 
@@ -63,16 +61,23 @@ namespace NasaSim
                  "ground control. Below 1 gives a heavier, more committed lunar hop.")]
         [Range(0f, 1f)] public float airControl = 0.55f;
 
-        [Header("Camera relationship")]
-        [Tooltip("Optional. When set, WASD is interpreted relative to where the camera is looking " +
-                 "(third-person). Leave empty for purely body-relative movement.")]
-        public Transform cameraTransform;
-        [Tooltip("Set by AstronautCameraRig. In first person the body is yawed by the mouse, so WASD " +
-                 "is body-relative and the body must NOT auto-turn toward the travel direction.")]
-        public bool bodyRelative = false;
-
         [Header("Input")]
         public bool enableInput = true;
+
+        [Header("Character Controller tuning")]
+        [Tooltip("Copy the cc* values below onto the CharacterController in Awake. Turn this off to " +
+                 "hand-tune the CharacterController directly in the Inspector instead.")]
+        public bool applyTuningOnAwake = true;
+        [Tooltip("Must exceed the steepest walkable ramp (the stair ramps are ~42°).")]
+        public float ccSlopeLimit = 50f;
+        [Tooltip("Tallest ledge mounted without jumping, in the root's LOCAL units. Unity multiplies the " +
+                 "whole capsule (this included) by the transform scale — keep the astronaut root at scale 1 " +
+                 "(Tools > NASA Sim > Setup > Normalize Astronaut Scale) so these numbers mean world metres.")]
+        public float ccStepOffset = 0.3f;
+        public float ccSkinWidth = 0.02f;
+        public float ccRadius = 0.3f;
+        public float ccHeight = 1.8f;
+        public Vector3 ccCenter = new Vector3(0f, 0.9f, 0f);
 
         CharacterController _cc;
         float _velocityY;
@@ -93,22 +98,25 @@ namespace NasaSim
         void Awake()
         {
             _cc = GetComponent<CharacterController>();
-            ApplyControllerTuning();
+            if (applyTuningOnAwake) ApplyControllerTuning();
         }
 
         /// <summary>
-        /// Dimensions that make stair climbing work. Step Offset must exceed the tallest riser the
-        /// astronaut should mount, and Slope Limit must exceed the staircase ramp angle (~42 degrees
-        /// for the placeholder flight) or the controller refuses to climb it.
+        /// Copy the serialized cc* dimensions onto the CharacterController. Step Offset must exceed the
+        /// tallest riser the astronaut should mount, and Slope Limit must exceed the steepest stair ramp
+        /// (~42°) or the controller refuses to climb it. The values live in serialized fields — not
+        /// constants — so the setup tools and the scene own them; safe to call from editor tools too.
         /// </summary>
-        void ApplyControllerTuning()
+        public void ApplyControllerTuning()
         {
-            _cc.slopeLimit = 50f;
-            _cc.stepOffset = 0.35f;
-            _cc.skinWidth = 0.02f;
-            _cc.radius = 0.3f;
-            _cc.height = 1.8f;
-            _cc.center = new Vector3(0f, 0.9f, 0f);
+            if (_cc == null) _cc = GetComponent<CharacterController>();
+            if (_cc == null) return;
+            _cc.slopeLimit = ccSlopeLimit;
+            _cc.stepOffset = ccStepOffset;
+            _cc.skinWidth = ccSkinWidth;
+            _cc.radius = ccRadius;
+            _cc.height = ccHeight;
+            _cc.center = ccCenter;
         }
 
         void Update()
@@ -125,27 +133,12 @@ namespace NasaSim
             bool grounded = _cc.isGrounded;
 
             // ---- Desired horizontal velocity ----
+            // First person is the only walking view: the mouse yaws the body (AstronautCameraRig), so
+            // WASD is always relative to the body itself.
             Vector3 wish = Vector3.zero;
             if (input.sqrMagnitude > 1e-4f)
             {
-                Vector3 forward, right;
-                if (!bodyRelative && cameraTransform != null)
-                {
-                    // Third person: WASD pushes the astronaut in screen-space directions.
-                    forward = Vector3.ProjectOnPlane(cameraTransform.forward, Vector3.up);
-                    if (forward.sqrMagnitude < 1e-6f)                       // camera looking straight down
-                        forward = Vector3.ProjectOnPlane(cameraTransform.up, Vector3.up);
-                    forward.Normalize();
-                    right = Vector3.Cross(Vector3.up, forward);
-                }
-                else
-                {
-                    // First person: the mouse yaws the body, so WASD is relative to the body itself.
-                    forward = transform.forward;
-                    right = transform.right;
-                }
-
-                wish = (forward * input.y + right * input.x);
+                wish = (transform.forward * input.y + transform.right * input.x);
                 if (wish.sqrMagnitude > 1f) wish.Normalize();               // no diagonal speed bonus
                 wish *= running ? runSpeed : walkSpeed;
             }
@@ -154,13 +147,6 @@ namespace NasaSim
             // twitchy, without touching the responsive feel on the ground.
             float accel = acceleration * (grounded ? 1f : Mathf.Clamp01(airControl));
             _horizontalVelocity = Vector3.MoveTowards(_horizontalVelocity, wish, accel * dt);
-
-            // ---- Face travel direction (third person only) ----
-            if (!bodyRelative && _horizontalVelocity.sqrMagnitude > 1e-4f)
-            {
-                Quaternion look = Quaternion.LookRotation(_horizontalVelocity.normalized, Vector3.up);
-                transform.rotation = Quaternion.RotateTowards(transform.rotation, look, rotationSpeedDeg * dt);
-            }
 
             // ---- Gravity + jump (forgiving input) ----
             // Coyote time: keep the jump alive for a moment after the ground drops away.

@@ -118,6 +118,8 @@ namespace NasaSim
         }
 
         Swinger[] _swingers = new Swinger[0];
+        Vector3 _reachTarget;
+        float _reachBlend;
         float _phase;
         float _amplitude;
         float _fpBlend;        // 0 = third person / overview, 1 = first person (eased)
@@ -143,6 +145,9 @@ namespace NasaSim
 
             if (_useAnimator)
             {
+                // The sim fast-forwards Time.timeScale up to 16x while the astronaut walks in real
+                // time — a real walk clip must run on the unscaled clock too, or it races the body.
+                animator.updateMode = AnimatorUpdateMode.UnscaledTime;
                 _hasSpeedParam = HasParameter(speedParameter);
                 _hasMovingParam = HasParameter(movingParameter);
                 _hasGroundedParam = HasParameter(groundedParameter);
@@ -300,10 +305,11 @@ namespace NasaSim
                 if (_hasSpeedParam) animator.SetFloat(speedParameter, speed);
                 if (_hasMovingParam) animator.SetBool(movingParameter, speed > 0.05f);
                 if (_hasGroundedParam) animator.SetBool(groundedParameter, grounded);
+                ApplyReach();          // LateUpdate runs after the Animator, so the override still wins
                 return;
             }
 
-            if (_swingers.Length == 0) return;
+            if (_swingers.Length == 0) { ApplyReach(); return; }
 
             // Ease the first-person arm pose and the airborne stilling so camera switches and jumps blend
             // smoothly instead of snapping.
@@ -351,6 +357,36 @@ namespace NasaSim
             // Dip the model root (never the controller root) for the landing crouch.
             if (_squashRoot != null)
                 _squashRoot.localPosition = _restSquashRootPos + Vector3.down * (_squash * landingSquashDepth);
+
+            ApplyReach();
+        }
+
+        /// <summary>
+        /// Set each frame by <see cref="FruitEatController"/> while a pick/eat sequence runs: aims the
+        /// RIGHT arm at a world target, blended over whatever pose the swing (or an Animator) produced.
+        /// Blend 0 hands the arm back untouched. Consumed every LateUpdate.
+        /// </summary>
+        public void SetReach(Vector3 worldTarget, float blend01)
+        {
+            _reachTarget = worldTarget;
+            _reachBlend = Mathf.Clamp01(blend01);
+        }
+
+        // Same world-space bone-driving idea as the swing: rotate the upper arm so its actual length
+        // axis (shoulder -> elbow, measured live) points at the target — the rig's authored axes never
+        // matter. Applied LAST so the reach wins over the swing for that arm.
+        void ApplyReach()
+        {
+            if (_reachBlend <= 0.001f || rightArm == null) return;
+
+            Vector3 boneDir = rightForearm != null
+                ? rightForearm.position - rightArm.position
+                : -rightArm.up;
+            Vector3 want = _reachTarget - rightArm.position;
+            if (boneDir.sqrMagnitude < 1e-8f || want.sqrMagnitude < 1e-8f) return;
+
+            Quaternion goal = Quaternion.FromToRotation(boneDir.normalized, want.normalized) * rightArm.rotation;
+            rightArm.rotation = Quaternion.Slerp(rightArm.rotation, goal, _reachBlend);
         }
     }
 }

@@ -93,8 +93,8 @@ namespace NasaSim.EditorTools
             {
                 Selection.activeGameObject = astronaut.gameObject;
                 Debug.Log("[AstronautSetup] Astronaut + staircase + balcony ready. Press Play: " +
-                          "WASD to walk, Shift to run, mouse to look, C to cycle " +
-                          "third-person / first-person / overview.", astronaut);
+                          "WASD to walk, Shift to run, mouse to look, C toggles " +
+                          "first-person / fly-cam.", astronaut);
             }
         }
 
@@ -103,19 +103,36 @@ namespace NasaSim.EditorTools
         static AstronautController BuildAstronaut(Material suit, Material visor, Material accent)
         {
             var root = FindOrCreate("Astronaut", null);
+            bool fresh = root.GetComponent<AstronautController>() == null;
+
             // Only place it on first creation, so re-running never teleports an astronaut you moved.
-            if (root.GetComponent<AstronautController>() == null)
-                root.transform.SetPositionAndRotation(new Vector3(0f, 0.1f, -22f), Quaternion.identity);
+            // A SPAWN_Outside marker (created by BiodomeFixTools) wins over the legacy default position.
+            if (fresh)
+            {
+                var spawn = GameObject.Find("SPAWN_Outside");
+                if (spawn != null)
+                    root.transform.SetPositionAndRotation(spawn.transform.position,
+                        Quaternion.Euler(0f, spawn.transform.eulerAngles.y, 0f));
+                else
+                    root.transform.SetPositionAndRotation(new Vector3(0f, 0.1f, -22f), Quaternion.identity);
+            }
 
-            var cc = GetOrAdd<CharacterController>(root);
-            cc.slopeLimit = 50f;          // must exceed the staircase ramp angle (~42 deg) or it won't climb
-            cc.stepOffset = 0.35f;
-            cc.skinWidth = 0.02f;
-            cc.radius = 0.30f;
-            cc.height = 1.80f;
-            cc.center = new Vector3(0f, 0.90f, 0f);
-
+            GetOrAdd<CharacterController>(root);
             var controller = GetOrAdd<AstronautController>(root);
+
+            // CharacterController dimensions are owned by the controller's serialized cc* fields and are
+            // written ONLY on first creation. After that, Normalize Astronaut Scale / hand-tuning owns
+            // them, and re-running this menu (to re-apply the feel) must not clobber that.
+            if (fresh)
+            {
+                controller.ccSlopeLimit = 50f;   // must exceed the staircase ramp angle (~42 deg)
+                controller.ccStepOffset = 0.30f;
+                controller.ccSkinWidth = 0.02f;
+                controller.ccRadius = 0.30f;
+                controller.ccHeight = 1.80f;
+                controller.ccCenter = new Vector3(0f, 0.90f, 0f);
+                controller.ApplyControllerTuning();
+            }
 
             // Anchors live on the ROOT, not inside the placeholder mesh, so the camera keeps working
             // after the placeholder is deleted and an FBX takes its place. If a real model is already
@@ -356,9 +373,7 @@ namespace NasaSim.EditorTools
             rig.astronaut = astronaut;
             rig.locomotion = astronaut.GetComponent<AstronautLocomotionVisual>();
             rig.headAnchor = astronaut.transform.Find("Head");
-            rig.cameraPivot = astronaut.transform.Find("CameraPivot");
-            rig.simulationManager = Object.FindAnyObjectByType<SimulationManager>();
-            rig.mode = AstronautCameraRig.ViewMode.ThirdPerson;
+            rig.mode = AstronautCameraRig.ViewMode.FirstPerson;
         }
 
         // ------------------------------------------------------------------ helpers

@@ -19,16 +19,24 @@ namespace NasaSim
     }
 
     /// <summary>
-    /// Thin facade the <see cref="TractorPathFollower"/> talks to. Forwards to an <see cref="IMowingVisual"/>
-    /// implementation (assigned, or found on this GameObject / its children).
+    /// Thin facade the <see cref="TractorPathFollower"/> talks to. Forwards every mow event to ALL
+    /// <see cref="IMowingVisual"/> implementations found — the explicitly assigned ones plus anything on
+    /// this GameObject or its children — so the flat trail ribbon (the crisp "cut" mark) and the
+    /// grass-flattening/flower visual run side by side without either knowing about the other.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class MowerController : MonoBehaviour
     {
-        [Tooltip("A component implementing IMowingVisual (e.g. MowingVisual_Trail). If empty, one is searched for on this object.")]
+        [Tooltip("A component implementing IMowingVisual (e.g. MowingVisual_Trail). Kept as a single slot " +
+                 "for scene compatibility; anything else implementing IMowingVisual on this object or its " +
+                 "children is picked up automatically as well.")]
         [SerializeField] MonoBehaviour visualBehaviour;
+        [Tooltip("Additional IMowingVisual components. Every entry (and every implementation found in " +
+                 "children) receives every mow event.")]
+        [SerializeField] MonoBehaviour[] visualBehaviours = new MonoBehaviour[0];
 
-        IMowingVisual _visual;
+        readonly System.Collections.Generic.List<IMowingVisual> _visuals =
+            new System.Collections.Generic.List<IMowingVisual>();
         bool _resolveAttempted;
 
         void Awake() => Resolve();
@@ -36,33 +44,44 @@ namespace NasaSim
         void Resolve()
         {
             _resolveAttempted = true;         // resolve (and warn) at most once, not every frame
-            _visual = visualBehaviour as IMowingVisual;
-            if (_visual == null) _visual = GetComponentInChildren<IMowingVisual>(true);
-            if (_visual == null)
+            _visuals.Clear();
+            AddVisual(visualBehaviour as IMowingVisual);
+            if (visualBehaviours != null)
+                foreach (var b in visualBehaviours)
+                    AddVisual(b as IMowingVisual);
+            foreach (var v in GetComponentsInChildren<IMowingVisual>(true))
+                AddVisual(v);
+
+            if (_visuals.Count == 0)
                 Debug.LogWarning("[MowerController] No IMowingVisual assigned or found in children.", this);
+        }
+
+        void AddVisual(IMowingVisual v)
+        {
+            if (v != null && !_visuals.Contains(v)) _visuals.Add(v);
         }
 
         void EnsureResolved()
         {
-            if (_visual == null && !_resolveAttempted) Resolve();
+            if (_visuals.Count == 0 && !_resolveAttempted) Resolve();
         }
 
         public void SetPenDown(bool down)
         {
             EnsureResolved();
-            _visual?.SetPenDown(down);
+            for (int i = 0; i < _visuals.Count; i++) _visuals[i].SetPenDown(down);
         }
 
         public void UpdateAt(Vector3 worldPosition)
         {
             EnsureResolved();
-            _visual?.UpdateAt(worldPosition);
+            for (int i = 0; i < _visuals.Count; i++) _visuals[i].UpdateAt(worldPosition);
         }
 
         public void ResetVisual()
         {
             EnsureResolved();
-            _visual?.ResetVisual();
+            for (int i = 0; i < _visuals.Count; i++) _visuals[i].ResetVisual();
         }
     }
 }
