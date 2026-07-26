@@ -27,8 +27,6 @@ namespace NasaSim.EditorTools
             var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
 
             Material grassMat = MakeMat($"{MatDir}/Grass.mat", "Universal Render Pipeline/Lit", new Color(0.20f, 0.42f, 0.16f));
-            Material mowedMat = MakeMat($"{MatDir}/MowedGrass.mat", "Universal Render Pipeline/Unlit", new Color(0.86f, 0.78f, 0.52f));
-            if (mowedMat.HasProperty("_Cull")) mowedMat.SetFloat("_Cull", 0f);   // double-sided: a flat trail ribbon must show from above
             Material bodyMat  = MakeMat($"{MatDir}/TractorBody.mat", "Universal Render Pipeline/Lit", new Color(0.85f, 0.16f, 0.16f));
             Material wheelMat = MakeMat($"{MatDir}/Wheel.mat", "Universal Render Pipeline/Lit", new Color(0.12f, 0.12f, 0.13f));
 
@@ -98,11 +96,13 @@ namespace NasaSim.EditorTools
             var mowerBrush = new GameObject("MowerBrush");
             mowerBrush.transform.SetParent(mowerAnchor.transform, worldPositionStays: false);
             mowerBrush.transform.localPosition = Vector3.zero;
-            var trailVisual = mowerBrush.AddComponent<MowingVisual_Trail>();
-            trailVisual.trailMaterial = mowedMat;
-            trailVisual.width = 0.5f;   // fallback; SimulationManager auto-scales this to the logo on Awake
+            // The mow is a real cut, not a mark painted on the floor: this visual cuts the blade field
+            // down and throws the flowers. It finds the MowableGrass in the scene itself on Awake, and
+            // falls back to flattening clumps when there is none — so a bare test scene still works.
+            var mowVisual = mowerBrush.AddComponent<MowingVisual_GrassAndFlowers>();
+            mowVisual.brushWidth = 0.6f;   // fallback; SimulationManager scales this to the logo on Awake
             var mowerController = mowerBrush.AddComponent<MowerController>();
-            SetSerialized(mowerController, "visualBehaviour", trailVisual);
+            SetSerialized(mowerController, "visualBehaviour", mowVisual);
 
             var follower = tractor.AddComponent<TractorPathFollower>();
             // Each stand-in wheel already has its pivot at its own hub, so no separate axle object is

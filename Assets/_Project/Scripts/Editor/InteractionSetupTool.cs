@@ -9,7 +9,7 @@ namespace NasaSim.EditorTools
     /// <summary>
     /// Builds the interaction layer: the screen-space prompt canvas (one legacy-UGUI label — TMP's
     /// essential resources are not imported), the <see cref="InteractionSensor"/> +
-    /// <see cref="FruitEatController"/> on the astronaut, and the first-person camera defaults.
+    /// <see cref="HandActionController"/> on the astronaut, and the first-person camera defaults.
     /// Idempotent: find-or-create by name, safe to re-run.
     /// </summary>
     public static class InteractionSetupTool
@@ -59,10 +59,10 @@ namespace NasaSim.EditorTools
                 sensor.interactableMask = NasaLayers.InteractableMask;
                 sensor.radius = 2f;
 
-                var eat = GetOrAdd<FruitEatController>(astronaut.gameObject);
-                eat.astronaut = astronaut;
-                eat.locomotion = astronaut.GetComponent<AstronautLocomotionVisual>();
-                eat.headAnchor = astronaut.transform.Find("Head");
+                var hand = GetOrAdd<HandActionController>(astronaut.gameObject);
+                hand.astronaut = astronaut;
+                hand.locomotion = astronaut.GetComponent<AstronautLocomotionVisual>();
+                hand.headAnchor = astronaut.transform.Find("Head");
             }
             else
             {

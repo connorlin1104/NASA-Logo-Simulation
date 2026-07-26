@@ -17,11 +17,10 @@ namespace NasaSim
         public TractorPathFollower tractor;
 
         [Header("Mowing")]
-        [Tooltip("The trail visual. If empty, the first one in the scene is found automatically.")]
-        public MowingVisual_Trail mowingVisual;
-        [Tooltip("Trail width as a FRACTION of the logo size, applied on Start so the marker stays a fine, " +
-                 "consistent thickness at any Target World Size. 0 = leave the visual's own Width alone.")]
-        [Range(0f, 0.1f)] public float trailWidthFraction = 0.012f;
+        [Tooltip("Width of the mown swath as a FRACTION of the logo size, applied on Awake so the cut " +
+                 "stays a consistent thickness at any Target World Size. 0 = leave the visual's own " +
+                 "Brush Width alone.")]
+        [Range(0f, 0.1f)] public float mowWidthFraction = 0.018f;
 
         [Header("Camera framing")]
         public Camera targetCamera;
@@ -45,7 +44,7 @@ namespace NasaSim
         void Awake()
         {
             // Before the tractor's Start() begins drawing, so the very first stroke uses the right width.
-            ApplyTrailWidth();
+            ApplyMowWidth();
         }
 
         void Start()
@@ -54,27 +53,16 @@ namespace NasaSim
             if (frameOnStart) FrameCamera();
         }
 
-        void ApplyTrailWidth()
+        void ApplyMowWidth()
         {
-            if (trailWidthFraction <= 0f) return;
+            if (mowWidthFraction <= 0f) return;
             WaypointPath path = loader != null ? (loader.Current ?? loader.Load()) : null;
             if (path == null || path.IsEmpty) return;
             float size = Mathf.Max(path.Bounds.size.x, path.Bounds.size.z);
 
-            var vis = mowingVisual != null ? mowingVisual : FindAnyObjectByType<MowingVisual_Trail>();
-            if (vis != null)
-            {
-                vis.width = Mathf.Max(0.01f, size * trailWidthFraction);
-                // Lay trail vertices at roughly half the ribbon width so corners read as smooth curves rather
-                // than faceted "choppy" segments, while staying bounded on long paths. Scales with the logo.
-                vis.minVertexDistance = Mathf.Clamp(vis.width * 0.5f, 0.05f, 0.5f);
-            }
-
-            // The grass/flower visual mows a slightly wider swath than the ribbon so clumps at the
-            // ribbon's edge don't poke through the cut mark.
             var grass = FindAnyObjectByType<MowingVisual_GrassAndFlowers>();
             if (grass != null)
-                grass.brushWidth = Mathf.Max(0.05f, size * trailWidthFraction * 1.5f);
+                grass.brushWidth = Mathf.Max(0.05f, size * mowWidthFraction);
         }
 
         void Update()

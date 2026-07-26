@@ -145,6 +145,9 @@ namespace NasaSim.EditorTools
             GrassFieldTool.ScatterDefault();
             GrassFieldTool.AddGrassMowingVisual();
             FruitTreeTool.AddDefaultTrees();
+            // Last: the blade field probes the ground for what it may not grow through, so everything that
+            // stands on the field — stairs, pillars, trunks — has to be there first.
+            GrassFieldTool.BuildMowableGrass();
 
             Debug.Log("[Foundations] Full vision setup complete. Two steps still need your eyes:\n" +
                       "  1. Select your ground model and run Tools > NASA Sim > Environment > " +

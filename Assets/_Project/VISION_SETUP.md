@@ -8,14 +8,15 @@ safe to re-run.
 
 Spawn outside the biodome facing the entrance → press **E** at the orange button → outer door slides
 up → step in → it seals behind you, gas floods the chamber (~4 s, real seconds even at 16× sim speed)
-→ inner door opens → inside, the tractor arcs naturally through the logo throwing NASA-colored flowers
-out the back while grass flattens under it → pick and eat fruit at the moat trees (**E**) → pat a duck
+→ inner door opens → inside, shin-deep grass ripples in the wind and parts around your boots, and the
+tractor arcs naturally through the logo cutting a clean mown swath through it — clippings out of the
+deck, NASA-colored flowers sprouting on the line just cut → pick and eat fruit at the moat trees (**E**) → pat a duck
 (**E**) → walk the moat bank (ripples, foam, refraction) → climb the spiral stairs to the balcony
 without jumping → **C** for the free-fly camera to admire the finished flower logo → **R** restarts.
 
 ## 1. The click order
 
-> **One-click:** `Tools ▸ NASA Sim ▸ Setup ▸ Run Full Vision Setup` runs steps 2–13 for you.
+> **One-click:** `Tools ▸ NASA Sim ▸ Setup ▸ Run Full Vision Setup` runs steps 2–13b for you.
 > Steps 14–15 always need your eyes.
 
 | # | Menu item | What it does |
@@ -25,13 +26,16 @@ without jumping → **C** for the free-fly camera to admire the finished flower 
 | 4 | `Models ▸ Reimport & Remap All Models` | Binds every FBX material slot to same-named project materials (see IMPORT_GUIDE Part 0) |
 | 5 | `Biodome ▸ Fix Dome Glass` | The big one: transparent, double-sided BiodomeGlass material — the dome is now visible from INSIDE and see-through from outside |
 | 6 | `Biodome ▸ Wire Colliders & Spawn Outside` | COL_/NOCOL_ colliders on the dome + tunnel, `SPAWN_Outside` marker, astronaut moved there |
-| 7 | `Setup ▸ Add Interaction System & UI` | The "[E] …" prompt UI + proximity sensor + eat controller; camera defaults to first person |
+| 7 | `Setup ▸ Add Interaction System & UI` | The "[E] …" prompt UI + proximity sensor + the astronaut's hand (eat/pet flourishes); camera defaults to first person |
 | 8 | `Biodome ▸ Build Airlock In Tunnel` | Doors, buttons, chamber sensor, gas vents, full pressurize cycle |
 | 9 | `Tractor ▸ Wire Steer Wheels From Axles` | *(optional — the follower now does this itself)* Fills Steer Wheels in at edit time so you can see the choice, and logs every wheel's measured hub position |
 | 10 | `Water ▸ Create Water Body` (Moat preset) | The moat ring (r 27–31 m) around the logo: animated water + mud basin with collider |
 | 11 | `Water ▸ Spawn Ducks & Fish` | 3 pattable ducks + 8 fish in the moat (re-run per pond, counts adjustable) |
-| 12 | `Grass ▸ Scatter Grass Field`, then `Grass ▸ Add Grass Mowing Visual` | ~1,700 GPU-instanced clumps over the field; mower flattens them and throws logo-colored flowers |
+| 12 | `Grass ▸ Add Grass Mowing Visual` | Puts the grass/flower visual on the mower — the cut *is* the mark, nothing is painted on the floor |
 | 13 | `Interactables ▸ Add Fruit Trees At Moat` | 4 placeholder trees on the outer bank; fruit grow at FRUIT_ markers in Play mode |
+| 13b | `Grass ▸ Build Mowable Grass` | **The grass itself** — ~70,000 standing blades over the field, cut down by the tractor. Run it **last**: it probes the ground for what it may not grow through (see §3b) |
+| — | `Grass ▸ Scatter Grass Tufts` / `Remove Scattered Tufts` | *Optional decoration only.* Modelled `GrassClump.fbx` tufts on top of the blade field. These are real GameObjects saved into the scene (1,500 of them is most of this scene's file size), so keep the density low — or remove them and let the blades do the work |
+| — | `Interactables ▸ Make Selected Eatable` / `Make Selected Pettable` | **Any time:** select any object(s) → makes them edible/pattable (adds the component + an `InteractTrigger` child sized to the object). Same animation for every object; per-object bites, pace and respawn live on the component |
 | 14 | **Manual:** select your ground model → `Environment ▸ Bake Simplified Collider` | Walkable collider baked from the uneven outside terrain (your visual ground stays untouched) |
 | 15 | **Manual:** select each spiral staircase → `Biodome ▸ Add Spiral Stair Ramp` | Set Turns/Clockwise/Start Angle until the green wireframe hugs the treads, Build. "Disable tread colliders" stays ON — the smooth helicoid replaces the snaggy per-tread colliders. Settings are remembered per staircase. |
 
@@ -45,14 +49,42 @@ without jumping → **C** for the free-fly camera to admire the finished flower 
 | **C** | Toggle first-person ↔ free-fly camera |
 | Fly cam | WASD + mouse, **Space/Ctrl** up/down, **Shift** fast, **scroll** = fly speed (your "zoom") |
 | 1–5, [ ] | Sim speed 1–16× (tractor/flowers only — you, doors, gas, water, ducks stay real-time) |
-| R | Restart the mow (grass stands back up, flowers recycle) |
+| R | Restart the mow (the whole field of grass springs back up, flowers recycle) |
 
 ## 3. The time rule (for anyone adding scripts later)
 
 `SimulationManager` drives `Time.timeScale` up to 16×. **Scaled** (fast-forwards): tractor, wheel
-spin, grass flattening, flower ballistics, trail. **Unscaled** (always real seconds): astronaut,
-cameras, doors, airlock + gas particles, interactions, fruit sequence, ducks/fish, water animation
-(script-fed `_WaterTime`). New ambience the player watches → unscaled; new mow-spectacle → scaled.
+spin, the cut itself, clippings, flower ballistics. **Unscaled** (always real seconds):
+astronaut, cameras, doors, airlock + gas particles, interactions, fruit sequence, ducks/fish, water
+animation (script-fed `_WaterTime`), grass wind and the push-aside (script-fed `_NasaGrassTime`).
+New ambience the player watches → unscaled; new mow-spectacle → scaled.
+
+## 3b. The grass
+
+`MowableGrass` (on the `MowableGrass` object) grows the field; `NasaSim/Grass` +
+`Materials/GrassBlades.mat` draw it.
+
+**Nothing about it is in the scene file.** The blades are generated from `Seed` when the scene loads
+and thrown away when it unloads, so density is free to change and the field never bloats the YAML.
+That also means they only exist while the component is enabled — deleting the object deletes the grass,
+and there is nothing to clean up.
+
+**The cut is a texture, not a mesh edit.** A single R8 mask is stretched over the field; the mower
+paints its swath into it, and every blade samples the mask *at its own base* in the vertex shader and
+shrinks to `Mown Height` where the tractor has been. Cutting 42 m² of grass therefore costs a few
+hundred bytes a frame, and **R** stands the whole field back up instantly by clearing the mask.
+
+| Field | What it does |
+|---|---|
+| `Density` | blades per m². 40 over the shipped field ≈ 70k blades / 500k verts. **`Editor Preview Fraction`** builds only a share of that outside play mode, because the editor rebuilds the field on every script recompile |
+| `Blade Height` / `Blade Width` / `Blade Lean` | the blade itself. Remember the astronaut is only ~0.9 m tall, so 0.3 m grass is properly shaggy |
+| `Ground Probe Spacing` | how finely the ground is raycast at build time. Grass follows what this finds, and skips anything within `Obstacle Clearance` of a stair, pillar or trunk. The tractor and the astronaut are excluded by name — otherwise wherever they were parked at build time would be a permanent bald patch |
+| `Mask Resolution` / `Cut Feather` | sharpness of the cut edge (1024 over 42 m ≈ 4 cm) |
+| `Walker` / `Walker Radius` | who parts the grass as they walk. Auto-finds the astronaut |
+| On the **material**: `Mown Height`, `Mown Color`, wind direction/strength/speed/wavelength, `Root Shading`, `Backlight` | the look. The three colours are the *brightest* blades — each blade carries a per-blade darkening tint so the field isn't one flat sheet |
+
+Clipping spray is measured, not faked: `Mow` counts how many mask texels were *still standing* where
+the deck just passed, so a second lap over ground already cut throws nothing.
 
 ## 4. Maya → Unity export checklist (per model)
 
@@ -90,6 +122,15 @@ exactly there. Three knobs shape it:
 
 Measured over a full simulated run: half the flowers land within 0.14 m of the mown line and none
 further than half the swath.
+
+**The flower itself** is generated, under `Flower Shape`: a tapered stem with two lance leaves, a
+centre disc, and `Petal Count` petals that widen, tilt up and droop at the tip. `Flower Height` scales
+the whole thing (default 0.44 m — the astronaut is ~0.9 m tall), `Flower Size Variation` spreads it
+per flower, `Flower Lean Degrees` stops a bed of them standing to attention. The material is *unlit*,
+because it has to multiply vertex colours — that is what lets one mesh per colour serve every flower
+of that colour and keeps ~1,300 of them batchable — so the head's depth comes from shading baked into
+those vertex colours (`Petal Shading`, and the stem/leaf darkening) rather than from a light.
+Edits take effect on the next **R**.
 
 **Colors are classified by shape, every run** (`Palette Mode = Logo Auto`, the default — nothing to
 set up). The shipped `nasa_logo_clean.csv` is 56 strokes:
@@ -141,7 +182,8 @@ Every sound moment already has an empty `AudioClip` slot — import a clip and d
 | Door servo open/close | `Airlock/DOOR_Outer` + `DOOR_Inner` → **Simple Door → Open/Close Clip** |
 | Pressurization hiss (looped) | `Airlock` → **Airlock Controller → Hiss Clip** |
 | Duck quack (on pat) | each `Duck_XX` → **Water Wanderer → Quack Clip** |
-| Bite crunch | `Astronaut` → **Fruit Eat Controller → Bite Clip** |
+| Bite crunch | `Astronaut` → **Hand Action Controller → Bite Clip**, or per-object on **Eatable Object → Bite Clip** |
+| Pat thump | per-object on **Pettable Object → Pat Clip** |
 
 ## 7. Decisions log (agreed 2026-07-24)
 

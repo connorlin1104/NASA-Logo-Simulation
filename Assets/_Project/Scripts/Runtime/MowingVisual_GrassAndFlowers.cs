@@ -5,8 +5,8 @@ using UnityEngine.Rendering;
 namespace NasaSim
 {
     /// <summary>
-    /// The second <see cref="IMowingVisual"/> (running beside the trail ribbon via
-    /// <see cref="MowerController"/>): flattens scattered grass clumps in the mower's swath, and throws
+    /// The mower's <see cref="IMowingVisual"/>: cuts the blade field down in the mower's swath (see
+    /// <see cref="MowableGrass"/>), flattens the scattered grass clumps standing on it, and throws
     /// colored flowers out the back that arc under lunar gravity and sprout <b>on the line just cut</b> —
     /// so the finished field reads as the NASA logo in flowers.
     ///
@@ -46,10 +46,15 @@ namespace NasaSim
             StrokeList = 3,
         }
 
-        [Header("Grass flattening")]
-        [Tooltip("Parent of the scattered clumps (the GrassField object). Auto-found by name if empty.")]
+        [Header("Grass cutting")]
+        [Tooltip("The field of standing blades to cut down. Auto-found in the scene if empty; leave it " +
+                 "unassigned (and with no MowableGrass in the scene) to fall back to flattening clumps only.")]
+        public MowableGrass mowableGrass;
+        [Tooltip("Parent of the scattered clumps (the GrassField object). Auto-found by name if empty. " +
+                 "These are the modelled tufts sitting on top of the blade field; they are squashed flat " +
+                 "as the deck passes.")]
         public Transform grassFieldRoot;
-        [Tooltip("Swath width. Overwritten on Start by SimulationManager (1.5x the trail width).")]
+        [Tooltip("Swath width. Overwritten on Awake by SimulationManager's Mow Width Fraction.")]
         [Min(0.05f)] public float brushWidth = 0.6f;
         [Range(0.02f, 1f)] public float flattenedYScale = 0.12f;
         public Color mowedTint = new Color(0.75f, 0.72f, 0.45f);
@@ -109,6 +114,27 @@ namespace NasaSim
                  "Tools > NASA Sim > Grass > Auto-Assign Stroke Colors, then free to hand-edit.")]
         public List<Color> strokeColors = new List<Color>();
 
+        [Header("Flower shape")]
+        [Tooltip("Overall height of a flower, stem included (m) — the one dial the whole flower scales " +
+                 "off, head included. 0.7 m puts a ~0.39 m head on a 0.9 m astronaut's chest, which is " +
+                 "about as big as this logo takes: at the shipped 0.6 m Flower Spacing and 1-2 per burst " +
+                 "the heads just meet, so the band reads as continuous colour rather than as dots. Much " +
+                 "past this and they overlap into mush.")]
+        [Min(0.05f)] public float flowerHeight = 0.7f;
+        [Tooltip("Random size spread around that height. 0.22 = anywhere from 78% to 122%.")]
+        [Range(0f, 0.6f)] public float flowerSizeVariation = 0.22f;
+        [Tooltip("Petals around the head. 5-8 reads as a flower; below 5 reads as a cross.")]
+        [Range(4, 10)] public int petalCount = 6;
+        [Tooltip("The flower's centre — the disc the petals radiate from.")]
+        public Color centerColor = new Color(0.98f, 0.80f, 0.26f, 1f);
+        [Tooltip("Stem and leaves.")]
+        public Color stemColor = new Color(0.19f, 0.40f, 0.15f, 1f);
+        [Tooltip("Random lean off vertical, so a bed of flowers isn't a parade ground.")]
+        [Range(0f, 25f)] public float flowerLeanDegrees = 9f;
+        [Tooltip("How much darker a petal is at its base than at its tip. Baked into the vertex colors — " +
+                 "the flower material is unlit, so this shading is what gives the head its depth.")]
+        [Range(0f, 0.8f)] public float petalShading = 0.4f;
+
         // ------------------------------------------------------------------ clump state
 
         struct Clump
@@ -147,7 +173,7 @@ namespace NasaSim
             public float flight;          // total flight time, so age == flight IS the landing
             public Vector3 tumbleAxis;
             public float tumbleDeg;       // degrees per second of tumble while airborne
-            public float yaw;             // resting yaw once planted
+            public Quaternion rest;       // how it stands once planted: random yaw plus a slight lean
             public int state;
             public float growT;
             public float finalScale;
@@ -196,6 +222,7 @@ namespace NasaSim
             _loader = FindAnyObjectByType<CsvWaypointLoader>();
             _follower = FindAnyObjectByType<TractorPathFollower>();
             if (tractor == null && _follower != null) tractor = _follower.transform;
+            if (mowableGrass == null) mowableGrass = FindAnyObjectByType<MowableGrass>();
             BuildClumpIndex();
         }
 
@@ -252,14 +279,18 @@ namespace NasaSim
         {
             if (_pen)
             {
-                CutAt(worldPosition);
-
                 float step = _hasLast
                     ? Vector2.Distance(new Vector2(_lastPos.x, _lastPos.z),
                                        new Vector2(worldPosition.x, worldPosition.z))
                     : 0f;
+                bool jumped = step > JumpDistance;
 
-                if (step > JumpDistance)
+                // The whole SEGMENT since the last sub-step is cut, not just the point: the tractor
+                // advances up to 0.25 m between calls, and a swath stamped as isolated circles scallops
+                // along its edges. A jump between strokes cuts only where it landed.
+                CutAt(_hasLast && !jumped ? _lastPos : worldPosition, worldPosition);
+
+                if (jumped)
                 {
                     // Not travel — a jump. Start the line over rather than throwing a burst per metre
                     // of the gap, all from the same spot.
@@ -286,6 +317,9 @@ namespace NasaSim
 
         public void ResetVisual()
         {
+            // Wipe the mow mask: the whole blade field springs back up on the next frame.
+            if (mowableGrass != null) mowableGrass.ResetMow();
+
             // Stand every clump back up and clear any tint override.
             for (int i = 0; i < _clumps.Length; i++)
             {
@@ -313,6 +347,21 @@ namespace NasaSim
             _trailHead = 0;
             _poolLimit = -1;          // re-derive, so live tuning of spacing/burst size takes effect on R
             _strokeDataBuilt = false; // ...and re-classify, so edits to the colors / Flowers On Stars do too
+            DiscardFlowerMeshes();    // ...and re-build the flower, so height/petals/lean do too
+        }
+
+        /// <summary>
+        /// Drop the generated flower meshes so the next burst rebuilds them from the current settings.
+        /// Only safe from <see cref="ResetVisual"/>, which has just pooled (deactivated) every flower —
+        /// each one is handed a fresh mesh by <see cref="ApplyFlowerColor"/> when it is next thrown.
+        /// </summary>
+        void DiscardFlowerMeshes()
+        {
+            foreach (var m in _tintedMeshes.Values)
+                if (m != null) Destroy(m);
+            _tintedMeshes.Clear();
+            if (_baseFlowerMesh != null) Destroy(_baseFlowerMesh);
+            _baseFlowerMesh = null;
         }
 
         // ------------------------------------------------------------------ the mown line
@@ -375,11 +424,17 @@ namespace NasaSim
 
         // ------------------------------------------------------------------ cutting
 
-        void CutAt(Vector3 pos)
+        void CutAt(Vector3 from, Vector3 pos)
         {
+            float radius = brushWidth * 0.5f;
+
+            // The blade field: a few hundred bytes painted into the mow mask, which the grass shader reads
+            // per blade. It also tells us how much grass was actually still standing there, which is what
+            // decides the clipping spray — so a second pass over cut ground throws nothing.
+            if (mowableGrass != null) mowableGrass.Mow(from, pos, radius);
+
             if (_clumps.Length == 0) return;
 
-            float radius = brushWidth * 0.5f;
             float radiusSq = radius * radius;
             int cx = Mathf.FloorToInt(pos.x / CellSize);
             int cz = Mathf.FloorToInt(pos.z / CellSize);
@@ -449,7 +504,7 @@ namespace NasaSim
                     if (f.age >= f.flight)
                     {
                         // The velocity was SOLVED to arrive here, so this is a continuation, not a snap.
-                        f.t.SetPositionAndRotation(f.landPoint, Quaternion.Euler(0f, f.yaw, 0f));
+                        f.t.SetPositionAndRotation(f.landPoint, f.rest);
                         f.state = StateGrowing;
                         f.growT = 0f;
                         _landedOrder.Enqueue(f);
@@ -462,8 +517,7 @@ namespace NasaSim
                         Vector3 p = f.launch + f.vel * a +
                                     new Vector3(0f, 0.5f * flowerGravity * a * a, 0f);
                         f.t.SetPositionAndRotation(
-                            p, Quaternion.AngleAxis(f.tumbleDeg * a, f.tumbleAxis) *
-                               Quaternion.Euler(0f, f.yaw, 0f));
+                            p, Quaternion.AngleAxis(f.tumbleDeg * a, f.tumbleAxis) * f.rest);
                     }
                 }
                 else if (f.state == StateGrowing)
@@ -527,17 +581,20 @@ namespace NasaSim
                 f.landPoint = target;
                 f.flight = flight;
                 f.age = 0f;
-                f.yaw = Random.value * 360f;
+                // A slight lean in a random direction, so a bed of them doesn't stand to attention.
+                f.rest = Quaternion.Euler(Random.Range(-flowerLeanDegrees, flowerLeanDegrees),
+                                          Random.value * 360f,
+                                          Random.Range(-flowerLeanDegrees, flowerLeanDegrees));
                 f.tumbleAxis = right;                                  // tumbles end-over-end as thrown
                 // A WHOLE number of turns over the flight, so the tumble is back at identity exactly as
                 // it lands and the flower plants itself upright without a one-frame rotation snap.
                 int turns = Random.Range(0, 2) == 0 ? -1 : 1;
                 if (Random.value < 0.35f) turns *= 2;
                 f.tumbleDeg = 360f * turns / flight;
-                f.finalScale = Random.Range(0.85f, 1.2f);
+                f.finalScale = Random.Range(1f - flowerSizeVariation, 1f + flowerSizeVariation);
                 f.state = StateFlying;
 
-                f.t.SetPositionAndRotation(launch, Quaternion.Euler(0f, f.yaw, 0f));
+                f.t.SetPositionAndRotation(launch, f.rest);
                 f.t.localScale = Vector3.one * (SeedScale * f.finalScale);
                 ApplyFlowerColor(f, color);
                 f.t.gameObject.SetActive(true);
@@ -836,39 +893,110 @@ namespace NasaSim
         }
 
         /// <summary>
-        /// A ~30 cm flower: two crossing vertical petal quads on a thin dark-green stem quad. The petal
-        /// color is baked into the vertex colors (the material multiplies by them), so one material and
-        /// one mesh per color serve every flower of that color.
+        /// An actual flower rather than the two crossed cards this used to be: a tapered stem with a pair
+        /// of lance leaves, a centre disc, and <see cref="petalCount"/> petals radiating from it — each
+        /// petal a lance that widens, tilts up and droops slightly at the tip, which is what stops a head
+        /// reading as a flat sticker from above.
+        ///
+        /// The flower material is UNLIT (it has to multiply vertex colors, which is how one mesh per color
+        /// serves every flower of that color and keeps ~1,300 of them batchable). So all the shading is
+        /// baked into the vertex colors here: petals darken toward their base, the stem darkens toward the
+        /// ground, leaves darken where they meet it. That is what gives the head depth with no lighting.
+        ///
+        /// Everything scales off <see cref="flowerHeight"/>, so the whole flower is one dial.
         /// </summary>
-        static Mesh BuildFlowerMesh(Color petal)
+        Mesh BuildFlowerMesh(Color petal)
         {
             var verts = new List<Vector3>();
             var cols = new List<Color>();
             var tris = new List<int>();
-            var stemColor = new Color(0.16f, 0.35f, 0.12f);
 
-            void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color col)
+            float h = Mathf.Max(0.05f, flowerHeight);
+            Color stemCol = stemColor;
+            Color petalTip = petal;
+            Color petalMid = Shade(petal, 1f - petalShading * 0.35f);
+            Color petalBase = Shade(petal, 1f - petalShading);
+
+            void Tri(int a, int b, int c) { tris.Add(a); tris.Add(b); tris.Add(c); }
+            int Vert(Vector3 p, Color col) { verts.Add(p); cols.Add(col); return verts.Count - 1; }
+
+            void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color lower, Color upper)
             {
-                int i0 = verts.Count;
-                verts.Add(a); verts.Add(b); verts.Add(c); verts.Add(d);
-                cols.Add(col); cols.Add(col); cols.Add(col); cols.Add(col);
-                tris.Add(i0); tris.Add(i0 + 1); tris.Add(i0 + 2);
-                tris.Add(i0); tris.Add(i0 + 2); tris.Add(i0 + 3);
+                int i0 = Vert(a, lower); int i1 = Vert(b, lower);
+                int i2 = Vert(c, upper); int i3 = Vert(d, upper);
+                Tri(i0, i1, i2); Tri(i0, i2, i3);
             }
 
-            const float petalHalf = 0.11f, petalBottom = 0.14f, petalTop = 0.34f, stemHalf = 0.012f;
-            // Petal cross (double-sided material, so one quad per plane suffices).
-            Quad(new Vector3(-petalHalf, petalBottom, 0f), new Vector3(petalHalf, petalBottom, 0f),
-                 new Vector3(petalHalf, petalTop, 0f), new Vector3(-petalHalf, petalTop, 0f), petal);
-            Quad(new Vector3(0f, petalBottom, -petalHalf), new Vector3(0f, petalBottom, petalHalf),
-                 new Vector3(0f, petalTop, petalHalf), new Vector3(0f, petalTop, -petalHalf), petal);
-            // Stem.
-            Quad(new Vector3(-stemHalf, 0f, 0f), new Vector3(stemHalf, 0f, 0f),
-                 new Vector3(stemHalf, petalBottom + 0.02f, 0f), new Vector3(-stemHalf, petalBottom + 0.02f, 0f),
-                 stemColor);
-            Quad(new Vector3(0f, 0f, -stemHalf), new Vector3(0f, 0f, stemHalf),
-                 new Vector3(0f, petalBottom + 0.02f, stemHalf), new Vector3(0f, petalBottom + 0.02f, -stemHalf),
-                 stemColor);
+            // ---- stem: two crossed quads, tapering, darker where it meets the ground ----
+            float headY = h * 0.80f;
+            float stemBase = h * 0.018f, stemTop = h * 0.009f;
+            Color stemFoot = Shade(stemCol, 0.6f);
+            Quad(new Vector3(-stemBase, 0f, 0f), new Vector3(stemBase, 0f, 0f),
+                 new Vector3(stemTop, headY, 0f), new Vector3(-stemTop, headY, 0f), stemFoot, stemCol);
+            Quad(new Vector3(0f, 0f, -stemBase), new Vector3(0f, 0f, stemBase),
+                 new Vector3(0f, headY, stemTop), new Vector3(0f, headY, -stemTop), stemFoot, stemCol);
+
+            // ---- two leaves, on opposite sides and at different heights ----
+            AddLeaf(h * 0.30f, 0.6f, h);
+            AddLeaf(h * 0.52f, 3.6f, h);
+
+            void AddLeaf(float atY, float angle, float scale)
+            {
+                var outward = new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle));
+                var across = new Vector3(-Mathf.Sin(angle), 0f, Mathf.Cos(angle));
+                Vector3 root = new Vector3(0f, atY, 0f) + outward * (stemTop * 0.5f);
+                Vector3 mid = root + outward * (scale * 0.075f) + Vector3.up * (scale * 0.035f);
+                Vector3 tip = root + outward * (scale * 0.145f) + Vector3.up * (scale * 0.048f);
+                float halfW = scale * 0.030f;
+
+                int b = Vert(root, Shade(stemCol, 0.65f));
+                int l = Vert(mid - across * halfW, stemCol);
+                int r = Vert(mid + across * halfW, stemCol);
+                int t = Vert(tip, Shade(stemCol, 1.1f));
+                Tri(b, l, r);          // the wedge from the stem out to the widest point
+                Tri(l, t, r);          // ...and the taper to the point
+            }
+
+            // ---- centre disc ----
+            float discR = h * 0.052f;
+            int centre = Vert(new Vector3(0f, headY + h * 0.012f, 0f), centerColor);
+            int firstRim = verts.Count;
+            const int DiscSides = 8;
+            for (int i = 0; i < DiscSides; i++)
+            {
+                float a = i / (float)DiscSides * Mathf.PI * 2f;
+                Vert(new Vector3(Mathf.Cos(a) * discR, headY, Mathf.Sin(a) * discR),
+                     Shade(centerColor, 0.78f));
+            }
+            for (int i = 0; i < DiscSides; i++)
+                Tri(centre, firstRim + i, firstRim + (i + 1) % DiscSides);
+
+            // ---- petals ----
+            int petals = Mathf.Clamp(petalCount, 4, 10);
+            float r0 = discR * 0.85f, r1 = h * 0.155f, r2 = h * 0.275f;
+            float w0 = h * 0.028f, w1 = h * 0.060f;
+            for (int i = 0; i < petals; i++)
+            {
+                // Half a step of offset per flower is not possible with a shared mesh, so the petals are
+                // evenly spaced; the per-flower yaw and lean supply the variety instead.
+                float a = (i + 0.5f) / petals * Mathf.PI * 2f;
+                var outward = new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a));
+                var across = new Vector3(-Mathf.Sin(a), 0f, Mathf.Cos(a));
+
+                // Up at the base, drooping past the widest point: a shallow S, which is what reads as a
+                // petal rather than a paper triangle when you look down on the head.
+                Vector3 pb = outward * r0 + Vector3.up * (headY + h * 0.004f);
+                Vector3 pm = outward * r1 + Vector3.up * (headY + h * 0.038f);
+                Vector3 pt = outward * r2 + Vector3.up * (headY + h * 0.014f);
+
+                int bl = Vert(pb - across * w0, petalBase);
+                int br = Vert(pb + across * w0, petalBase);
+                int ml = Vert(pm - across * w1, petalMid);
+                int mr = Vert(pm + across * w1, petalMid);
+                int tp = Vert(pt, petalTip);
+                Tri(bl, ml, br); Tri(br, ml, mr);
+                Tri(ml, tp, mr);
+            }
 
             var mesh = new Mesh { name = "Flower (generated)", hideFlags = HideFlags.HideAndDontSave };
             mesh.SetVertices(verts);
@@ -878,6 +1006,10 @@ namespace NasaSim
             mesh.RecalculateBounds();
             return mesh;
         }
+
+        /// <summary>Scale a color's brightness without touching its alpha (alpha is the "throws nothing" channel).</summary>
+        static Color Shade(Color c, float k) =>
+            new Color(Mathf.Clamp01(c.r * k), Mathf.Clamp01(c.g * k), Mathf.Clamp01(c.b * k), c.a);
 
         Material GetFlowerMaterial()
         {
@@ -898,10 +1030,7 @@ namespace NasaSim
             // The generated mesh/material are HideAndDontSave, so Unity will not reclaim them — take the
             // renderers using them down first, then the assets themselves.
             if (_flowerRoot != null) Destroy(_flowerRoot.gameObject);
-            foreach (var m in _tintedMeshes.Values)
-                if (m != null) Destroy(m);
-            _tintedMeshes.Clear();
-            if (_baseFlowerMesh != null) Destroy(_baseFlowerMesh);
+            DiscardFlowerMeshes();
             if (_flowerMaterial != null) Destroy(_flowerMaterial);
         }
     }

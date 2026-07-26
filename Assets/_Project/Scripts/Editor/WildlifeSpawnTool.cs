@@ -9,7 +9,7 @@ namespace NasaSim.EditorTools
     /// <summary>
     /// Populates a <see cref="WaterBody"/> with ducks and fish. "Easily added per pond": select a pond,
     /// open the tool, set counts, Spawn — re-running ADJUSTS the population (adds or removes) instead of
-    /// duplicating. Ducks are pattable (Interactable trigger + <see cref="DuckInteractable"/>); fish
+    /// duplicating. Ducks are pattable (Interactable trigger + <see cref="PettableObject"/>); fish
     /// just swim. All visuals are PH_ placeholder primitives with the scripts on the roots, so modeled
     /// FBX ducks/fish swap in later with no re-wiring.
     /// </summary>
@@ -110,8 +110,10 @@ namespace NasaSim.EditorTools
             audio.spatialBlend = 1f;
             wander.audioSource = audio;
 
-            var interactable = root.AddComponent<DuckInteractable>();
+            var interactable = root.AddComponent<PettableObject>();
             interactable.wanderer = wander;
+            interactable.label = "duck";
+            interactable.audioSource = audio;
 
             Material bodyMat = SceneBootstrap.MakeMat("Assets/_Project/Materials/DuckBody.mat",
                 "Universal Render Pipeline/Lit", new Color(0.95f, 0.92f, 0.78f));

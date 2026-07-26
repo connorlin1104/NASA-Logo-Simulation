@@ -1788,7 +1788,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 0, y: -0.001, z: 0}
-  m_LocalScale: {x: 6.4139996, y: 1.2828, z: 6.4139996}
+  m_LocalScale: {x: 9.645372, y: 1.9290746, z: 9.645372}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 151893833}
@@ -7176,7 +7176,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 4.2487, y: 0.84974, z: 4.2487}
+  m_LocalScale: {x: 4.136688, y: 0.8273377, z: 4.136688}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 151893833}
@@ -15243,7 +15243,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 234801045}
-  - component: {fileID: 234801046}
   - component: {fileID: 234801047}
   - component: {fileID: 234801048}
   m_Layer: 0
@@ -15268,23 +15267,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 1958442570}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &234801046
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 234801044}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c99b7a28f7c5e407fad1beb06392b79c, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::NasaSim.MowingVisual_Trail
-  trailMaterial: {fileID: 2100000, guid: f7aa17a665b514040af0be897d9eaa0c, type: 2}
-  width: 0.5
-  minVertexDistance: 0.3
-  heightOffset: 0.05
-  fallbackColor: {r: 1, g: 1, b: 1, a: 1}
 --- !u!114 &234801047
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -15297,7 +15279,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: fbee692fbfc8d48a2b4acf24c0fd2c98, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::NasaSim.MowerController
-  visualBehaviour: {fileID: 234801046}
+  visualBehaviour: {fileID: 234801048}
   visualBehaviours: []
 --- !u!114 &234801048
 MonoBehaviour:
@@ -15311,27 +15293,33 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 53afe1884f5c04b62b681adc25533a1a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::NasaSim.MowingVisual_GrassAndFlowers
+  mowableGrass: {fileID: 1209771357}
   grassFieldRoot: {fileID: 547926900}
   brushWidth: 0.6
   flattenedYScale: 0.12
   mowedTint: {r: 0.75, g: 0.72, b: 0.45, a: 1}
   flattenSeconds: 0.25
-  paletteMode: 0
-  singleColor: {r: 0.9, g: 0.2, b: 0.25, a: 1}
-  logoColorLookup: {fileID: 0}
   flowerSpacing: 0.6
   flowersPerBurst: {x: 1, y: 2}
-  ejectSpeedRange: {x: 2.5, y: 4}
-  ejectPitchRangeDeg: {x: 35, y: 60}
-  ejectYawSpreadDeg: 80
+  landBackDistance: {x: 0.5, y: 1.5}
+  landSideSpread: 0.9
+  arcSeconds: {x: 0.7, y: 1}
+  launchHeight: 0.35
   flowerGravity: -3.5
   growSeconds: 1
-  maxFlowers: 800
+  flowerPoolLimit: 0
   tractor: {fileID: 1911503796}
   customFlowerMesh: {fileID: 0}
   flowerGroundMask:
     serializedVersion: 2
-    m_Bits: 4294967039
+    m_Bits: 567
+  paletteMode: 0
+  circleColor: {r: 0.043, g: 0.239, b: 0.569, a: 1}
+  swooshColor: {r: 0.988, g: 0.239, b: 0.129, a: 1}
+  otherColor: {r: 1, g: 1, b: 1, a: 1}
+  flowersOnStars: 0
+  singleColor: {r: 0.9, g: 0.2, b: 0.25, a: 1}
+  logoColorLookup: {fileID: 0}
   strokeColors:
   - {r: 0.988, g: 0.239, b: 0.129, a: 1}
   - {r: 1, g: 1, b: 1, a: 1}
@@ -15389,6 +15377,13 @@ MonoBehaviour:
   - {r: 1, g: 1, b: 1, a: 1}
   - {r: 1, g: 1, b: 1, a: 1}
   - {r: 1, g: 1, b: 1, a: 1}
+  flowerHeight: 0.7
+  flowerSizeVariation: 0.22
+  petalCount: 6
+  centerColor: {r: 0.98, g: 0.8, b: 0.26, a: 1}
+  stemColor: {r: 0.19, g: 0.4, b: 0.15, a: 1}
+  flowerLeanDegrees: 9
+  petalShading: 0.4
 --- !u!1001 &235097138
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -16724,7 +16719,25 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2f7551264bf0240bb8df4585a86a5a6d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::NasaSim.DuckInteractable
+  verb: Pet
+  label: 
+  promptOverride: 
+  pats: 3
+  patInterval: 0.42
+  petAnchor: {fileID: 0}
+  squashOnPat: 1
+  squashAmount: 0.14
+  squashRecoverSeconds: 0.3
+  squashBody: {fileID: 0}
   wanderer: {fileID: 250083208}
+  audioSource: {fileID: 0}
+  patClip: {fileID: 0}
+  onPat:
+    m_PersistentCalls:
+      m_Calls: []
+  onPetted:
+    m_PersistentCalls:
+      m_Calls: []
 --- !u!82 &250083207
 AudioSource:
   m_ObjectHideFlags: 0
@@ -27558,6 +27571,7 @@ MonoBehaviour:
   regrowSeconds: 30
   fruitDiameter: 0.18
   growInSeconds: 1.2
+  bitesPerFruit: 3
   fruitMaterial: {fileID: 2100000, guid: e3249b39dbf994bcd94dc5e174303b03, type: 2}
 --- !u!1001 &407365201
 PrefabInstance:
@@ -47137,6 +47151,7 @@ MonoBehaviour:
   regrowSeconds: 30
   fruitDiameter: 0.18
   growInSeconds: 1.2
+  bitesPerFruit: 3
   fruitMaterial: {fileID: 2100000, guid: e3249b39dbf994bcd94dc5e174303b03, type: 2}
 --- !u!1001 &651485246
 PrefabInstance:
@@ -59493,7 +59508,25 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2f7551264bf0240bb8df4585a86a5a6d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::NasaSim.DuckInteractable
+  verb: Pet
+  label: 
+  promptOverride: 
+  pats: 3
+  patInterval: 0.42
+  petAnchor: {fileID: 0}
+  squashOnPat: 1
+  squashAmount: 0.14
+  squashRecoverSeconds: 0.3
+  squashBody: {fileID: 0}
   wanderer: {fileID: 807426625}
+  audioSource: {fileID: 0}
+  patClip: {fileID: 0}
+  onPat:
+    m_PersistentCalls:
+      m_Calls: []
+  onPetted:
+    m_PersistentCalls:
+      m_Calls: []
 --- !u!82 &807426624
 AudioSource:
   m_ObjectHideFlags: 0
@@ -65491,6 +65524,10 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: -5257933880952914860, guid: ee24b307b8b5044528dc23c1fdfbcc7e, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: 66df00b8fb8a549adabd61ab748dfea3, type: 2}
     - target: {fileID: -4397095995729956865, guid: ee24b307b8b5044528dc23c1fdfbcc7e, type: 3}
       propertyPath: 'm_Materials.Array.data[0]'
       value: 
@@ -67995,7 +68032,25 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2f7551264bf0240bb8df4585a86a5a6d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::NasaSim.DuckInteractable
+  verb: Pet
+  label: 
+  promptOverride: 
+  pats: 3
+  patInterval: 0.42
+  petAnchor: {fileID: 0}
+  squashOnPat: 1
+  squashAmount: 0.14
+  squashRecoverSeconds: 0.3
+  squashBody: {fileID: 0}
   wanderer: {fileID: 904182919}
+  audioSource: {fileID: 0}
+  patClip: {fileID: 0}
+  onPat:
+    m_PersistentCalls:
+      m_Calls: []
+  onPetted:
+    m_PersistentCalls:
+      m_Calls: []
 --- !u!82 &904182918
 AudioSource:
   m_ObjectHideFlags: 0
@@ -100479,6 +100534,71 @@ Transform:
   m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 19cb4fae8a9ba4c7db3ab48099145f82, type: 3}
   m_PrefabInstance: {fileID: 1209297309}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &1209771356
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1209771358}
+  - component: {fileID: 1209771357}
+  m_Layer: 0
+  m_Name: MowableGrass
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1209771357
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1209771356}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d08fbe18ae3d84895b46d41e7c16bf8a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::NasaSim.MowableGrass
+  groundRenderer: {fileID: 111891579}
+  fallbackFieldSize: 42
+  edgeInset: 0.4
+  groundProbeSpacing: 0.6
+  groundMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  obstacleClearance: 0.3
+  density: 45
+  bladeHeight: {x: 0.17, y: 0.3}
+  bladeWidth: 0.035
+  bladeLean: 0.32
+  placementJitter: 0.45
+  seed: 20260725
+  editorPreviewFraction: 0.35
+  maskResolution: 1024
+  cutFeather: 0.4
+  clippings: 1
+  walker: {fileID: 1661535069}
+  walkerRadius: 0.5
+  material: {fileID: 2100000, guid: fe1e1278edf164f44b9faa4d3b4025e1, type: 2}
+--- !u!4 &1209771358
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1209771356}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1210084661
 GameObject:
   m_ObjectHideFlags: 0
@@ -124287,6 +124407,7 @@ MonoBehaviour:
   regrowSeconds: 30
   fruitDiameter: 0.18
   growInSeconds: 1.2
+  bitesPerFruit: 3
   fruitMaterial: {fileID: 2100000, guid: e3249b39dbf994bcd94dc5e174303b03, type: 2}
 --- !u!1001 &1549490340
 PrefabInstance:
@@ -124879,6 +125000,7 @@ MonoBehaviour:
   regrowSeconds: 30
   fruitDiameter: 0.18
   growInSeconds: 1.2
+  bitesPerFruit: 3
   fruitMaterial: {fileID: 2100000, guid: e3249b39dbf994bcd94dc5e174303b03, type: 2}
 --- !u!1001 &1556211072
 PrefabInstance:
@@ -141372,6 +141494,7 @@ MonoBehaviour:
   rightForearm: {fileID: 3899615040261512506}
   leftLeg: {fileID: 1374305101001769282}
   rightLeg: {fileID: 7839371361541752524}
+  rightHand: {fileID: 0}
   armSwingDeg: 34
   legSwingDeg: 28
   forearmFollow: 0.45
@@ -141392,6 +141515,7 @@ MonoBehaviour:
   landingKneeBendDeg: 30
   landingFullSpeed: 3.5
   landingRecoverSpeed: 7
+  reachElbowOut: 0.6
   speedParameter: Speed
   movingParameter: IsMoving
   groundedParameter: IsGrounded
@@ -141461,7 +141585,7 @@ Transform:
   m_GameObject: {fileID: 1661535065}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0.28844643, y: -0.14490099, z: -75.85928}
+  m_LocalPosition: {x: 0.28844643, y: 2.68, z: -43.95}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -141485,11 +141609,18 @@ MonoBehaviour:
   astronaut: {fileID: 1661535067}
   locomotion: {fileID: 1661535066}
   headAnchor: {fileID: 39812207}
+  holdOffset: {x: 0.22, y: -0.24, z: 0.6}
+  mouthOffset: {x: 0.08, y: -0.05, z: 0.4}
+  restOffset: {x: 0.34, y: -0.66, z: 0.28}
+  pitchFollow: 0.6
   reachSeconds: 0.4
   bringSeconds: 0.4
-  biteInterval: 0.5
-  bites: 3
   settleSeconds: 0.35
+  carryScale: 0.9
+  biteSnapSeconds: 0.18
+  petReachSeconds: 0.32
+  petSettleSeconds: 0.32
+  petAimBias: 0.6
   audioSource: {fileID: 0}
   biteClip: {fileID: 0}
 --- !u!114 &1661535071
@@ -159800,6 +159931,7 @@ MonoBehaviour:
     spinMultiplier: 1
   wheelSpinMultiplier: 3
   showWheelGizmos: 0
+  steerWheelSelection: 0
   steerWheels:
   - {fileID: 444522851}
   - {fileID: 1798121250494348957}
@@ -179360,8 +179492,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::NasaSim.SimulationManager
   loader: {fileID: 1775928585}
   tractor: {fileID: 1911503795}
-  mowingVisual: {fileID: 0}
-  trailWidthFraction: 0.012
+  mowWidthFraction: 0.018
   targetCamera: {fileID: 1809922639}
   frameOnStart: 0
   framePadding: 1.35
@@ -204176,3 +204307,4 @@ SceneRoots:
   - {fileID: 320378159}
   - {fileID: 547926900}
   - {fileID: 680030610}
+  - {fileID: 1209771358}

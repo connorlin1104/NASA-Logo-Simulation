@@ -966,7 +966,7 @@ namespace NasaSim
         /// <summary>
         /// Brush world position for the mowing visual: the anchor's ground XZ but lifted to the render-layer
         /// height baked into the waypoint we are currently drawing toward. The tractor body itself stays flat
-        /// (see Flat / fixedY); only the mowed ribbon rides the layer so upper layers (letters) draw on top.
+        /// (see Flat / fixedY); only the mow rides the layer so upper layers (letters) draw on top.
         /// </summary>
         Vector3 MowerWorldPos()
         {

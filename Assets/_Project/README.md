@@ -192,10 +192,10 @@ Everything references **Transforms**, never object names, so replacing primitive
 
 The mower anchor is mid-mounted on the tractor pivot so the cut traces the CSV **exactly**. To draw the
 cut from a rear **plow/deck** instead, move `MowerAnchor` there: the follower **sub-samples the deck
-position along the path within each frame**, so the ribbon stays smooth (no choppy facets at corners)
+position along the path within each frame**, so the swath stays smooth (no scalloped edges at corners)
 even when the tractor crosses several waypoints per frame or the run is sped up. A far-rear deck still
 rounds *very* sharp letter corners slightly — that's inherent to a trailing deck; keep the anchor as
-close to the axle as the look allows, or lower **Mowing Visual_Trail ▸ Min Vertex Distance** for crisper
+close to the axle as the look allows, or narrow **Simulation Manager ▸ Mow Width Fraction** for crisper
 corners.
 
 ## Colliders
@@ -214,7 +214,8 @@ corners.
 | `Runtime/CsvWaypointLoader.cs` | parse CSV → path (remap, auto-fit, pen detection) |
 | `Runtime/TractorPathFollower.cs` | kinematic driving, wheels, pen control, gizmo preview |
 | `Runtime/MowerController.cs` | `IMowingVisual` facade (swap the visual without touching the tractor) |
-| `Runtime/MowingVisual_Trail.cs` | flat per-stroke TrailRenderer ("mowed" ribbon) |
+| `Runtime/MowableGrass.cs` | the standing blade field + the mow mask the tractor cuts into it |
+| `Runtime/MowingVisual_GrassAndFlowers.cs` | cuts the blades, flattens clumps, throws the logo's flowers |
 | `Runtime/SimulationManager.cs` | load / restart / camera framing |
 | `Editor/SceneBootstrap.cs` | **Tools ▸ NASA Sim ▸ Build Test Scene** |
 

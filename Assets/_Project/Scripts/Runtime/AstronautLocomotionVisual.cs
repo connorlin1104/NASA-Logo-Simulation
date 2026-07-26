@@ -39,6 +39,10 @@ namespace NasaSim
         public Transform rightForearm;
         public Transform leftLeg;
         public Transform rightLeg;
+        [Tooltip("Right wrist. Only the INTERACTION ARM uses it (to measure the forearm and find the " +
+                 "palm). Auto-detected from a Humanoid avatar, then a 'hand'/'wrist' child of the " +
+                 "forearm, then a name search; if nothing is found the forearm's mesh supplies the tip.")]
+        public Transform rightHand;
 
         // NOTE: AstronautSetup ("Add Astronaut & Balcony To Scene") re-applies the moon-walk feel to the
         // scene's component each run; the defaults here match so a fresh component looks the same.
@@ -96,6 +100,12 @@ namespace NasaSim
         [Tooltip("How quickly the crouch recovers after landing.")]
         [Min(0.1f)] public float landingRecoverSpeed = 7f;
 
+        [Header("Interaction arm (eat / pet)")]
+        [Tooltip("How far the elbow swings OUT to the side while the hand reaches for something. 0 drops " +
+                 "it straight down behind the hand; higher values open the arm out so the forearm reads " +
+                 "clearly across the lower visor instead of pointing at the camera.")]
+        [Range(-1f, 1.5f)] public float reachElbowOut = 0.6f;
+
         [Header("Animator parameters")]
         public string speedParameter = "Speed";
         public string movingParameter = "IsMoving";
@@ -118,8 +128,9 @@ namespace NasaSim
         }
 
         Swinger[] _swingers = new Swinger[0];
-        Vector3 _reachTarget;
-        float _reachBlend;
+        float _upperArmLen;        // world metres, shoulder -> elbow, measured off the live rig
+        float _forearmLen;         // world metres, elbow -> wrist
+        Vector3 _wristLocal;       // wrist position in the forearm's local space (measured or estimated)
         float _phase;
         float _amplitude;
         float _fpBlend;        // 0 = third person / overview, 1 = first person (eased)
@@ -151,6 +162,12 @@ namespace NasaSim
                 _hasSpeedParam = HasParameter(speedParameter);
                 _hasMovingParam = HasParameter(movingParameter);
                 _hasGroundedParam = HasParameter(groundedParameter);
+
+                // The interaction arm is solved by hand on top of the clip, so it needs the bones and
+                // their measured lengths on this path too.
+                ResolveBones();
+                ResolveHand();
+                MeasureArm();
             }
             else
             {
@@ -165,6 +182,8 @@ namespace NasaSim
         public void Rebind()
         {
             ResolveBones();
+            ResolveHand();
+            MeasureArm();
 
             // First-person forward lift/bend. About the swing axis, "forward" is a NEGATIVE angle (a bone
             // hanging down rotates toward +Z, the body's front). So the biases are negated here, and both
@@ -243,6 +262,89 @@ namespace NasaSim
         static Transform Pick(Transform existing, Transform candidate) => candidate != null ? candidate : existing;
 
         /// <summary>
+        /// Find the right wrist. Same escalating strategy as the other bones, plus a breadth-first
+        /// "hand"/"wrist" search under the forearm — which catches Biped ("Bip001 R Hand"), Mixamo and
+        /// hand-named Maya joints alike without matching a finger first.
+        /// </summary>
+        void ResolveHand()
+        {
+            if (rightHand == null && animator != null && animator.isHuman
+                && animator.avatar != null && animator.avatar.isValid)
+                rightHand = animator.GetBoneTransform(HumanBodyBones.RightHand);
+
+            if (rightHand == null && rightForearm != null)
+                rightHand = FindDescendantContaining(rightForearm, "hand", "wrist", "palm");
+
+            if (rightHand == null)
+                rightHand = FindBone("bip001rhand", "righthand", "hand_r", "r_hand", "wrist_r", "hand_right");
+
+            if (rightHand == rightForearm) rightHand = null;
+        }
+
+        /// <summary>
+        /// Measure the right arm's segment lengths in WORLD metres off the live rig, so the reach maths
+        /// works the same for the 1.8 m primitive placeholder and a model imported at any scale.
+        /// </summary>
+        void MeasureArm()
+        {
+            _upperArmLen = 0f;
+            _forearmLen = 0f;
+            _wristLocal = Vector3.zero;
+            if (rightArm == null || rightForearm == null) return;
+
+            _upperArmLen = Vector3.Distance(rightArm.position, rightForearm.position);
+            if (_upperArmLen < 1e-4f) { _upperArmLen = 0f; return; }
+
+            if (rightHand != null)
+            {
+                _wristLocal = rightForearm.InverseTransformPoint(rightHand.position);
+                _forearmLen = Vector3.Distance(rightForearm.position, rightHand.position);
+            }
+
+            if (_forearmLen < 1e-4f)
+            {
+                _wristLocal = EstimateWristLocal();
+                _forearmLen = Vector3.Distance(rightForearm.position, rightForearm.TransformPoint(_wristLocal));
+            }
+            if (_forearmLen < 1e-4f) { _upperArmLen = 0f; _forearmLen = 0f; }
+        }
+
+        /// <summary>
+        /// No wrist bone: put the tip at twice the centroid of whatever the forearm renders (a limb mesh
+        /// hangs from its joint, so its centre sits at half the segment's length), and if the forearm
+        /// renders nothing, continue the upper arm's line for the same length again.
+        /// </summary>
+        Vector3 EstimateWristLocal()
+        {
+            var rends = rightForearm.GetComponentsInChildren<Renderer>();
+            if (rends.Length > 0)
+            {
+                Bounds b = rends[0].bounds;
+                for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+                Vector3 local = rightForearm.InverseTransformPoint(b.center) * 2f;
+                if (local.sqrMagnitude > 1e-8f) return local;
+            }
+            Vector3 dir = (rightForearm.position - rightArm.position).normalized;
+            return rightForearm.InverseTransformPoint(rightForearm.position + dir * _upperArmLen);
+        }
+
+        /// <summary>Breadth-first descendant search: the first bone whose name contains one of the words.</summary>
+        static Transform FindDescendantContaining(Transform root, params string[] words)
+        {
+            var queue = new System.Collections.Generic.Queue<Transform>();
+            for (int i = 0; i < root.childCount; i++) queue.Enqueue(root.GetChild(i));
+            while (queue.Count > 0)
+            {
+                Transform t = queue.Dequeue();
+                string n = Normalize(t.name);
+                for (int i = 0; i < words.Length; i++)
+                    if (n.Contains(words[i])) return t;
+                for (int i = 0; i < t.childCount; i++) queue.Enqueue(t.GetChild(i));
+            }
+            return null;
+        }
+
+        /// <summary>
         /// The model-root child of the controller object - the only thing safe to dip for the landing
         /// squash. It must NOT be the controller's own transform (dipping that would fight the
         /// CharacterController's Move), so we walk up from a resolved bone to the highest ancestor that is
@@ -305,11 +407,10 @@ namespace NasaSim
                 if (_hasSpeedParam) animator.SetFloat(speedParameter, speed);
                 if (_hasMovingParam) animator.SetBool(movingParameter, speed > 0.05f);
                 if (_hasGroundedParam) animator.SetBool(groundedParameter, grounded);
-                ApplyReach();          // LateUpdate runs after the Animator, so the override still wins
-                return;
+                return;                // the interaction arm is layered on afterwards, see ApplyHandTargetNow
             }
 
-            if (_swingers.Length == 0) { ApplyReach(); return; }
+            if (_swingers.Length == 0) return;
 
             // Ease the first-person arm pose and the airborne stilling so camera switches and jumps blend
             // smoothly instead of snapping.
@@ -357,36 +458,125 @@ namespace NasaSim
             // Dip the model root (never the controller root) for the landing crouch.
             if (_squashRoot != null)
                 _squashRoot.localPosition = _restSquashRootPos + Vector3.down * (_squash * landingSquashDepth);
+        }
 
-            ApplyReach();
+        // ---------------------------------------------------------------- interaction arm
+
+        /// <summary>True when the right arm can be solved as a two-bone chain (shoulder/elbow/wrist).</summary>
+        public bool HasReachArm => rightArm != null && rightForearm != null && _upperArmLen > 0f && _forearmLen > 0f;
+
+        /// <summary>Shoulder-to-wrist span in WORLD metres. Everything the hand does is expressed as a
+        /// fraction of this, so poses frame the same way whatever size the model is.</summary>
+        public float ArmReach => _upperArmLen + _forearmLen;
+
+        public Vector3 ShoulderPosition => rightArm != null ? rightArm.position : transform.position;
+
+        /// <summary>Live world position of the right wrist (the measured tip when there is no wrist bone).</summary>
+        public Vector3 WristPosition =>
+            rightHand != null ? rightHand.position
+            : rightForearm != null ? rightForearm.TransformPoint(_wristLocal)
+            : ShoulderPosition;
+
+        /// <summary>
+        /// Where a carried object sits after the last <see cref="ApplyHandTargetNow"/> — the palm, i.e.
+        /// the wrist pushed forward along the forearm by the grip offset that was asked for.
+        /// </summary>
+        public Vector3 GripPoint { get; private set; }
+
+        /// <summary>
+        /// Pull a world point inside the arm's comfortable working envelope. Callers clamp their own
+        /// targets with this so the pose they animate and the pose the arm can actually hit agree — a
+        /// carried object then never drifts off the hand.
+        /// </summary>
+        public Vector3 ClampToArmReach(Vector3 worldPoint, float gripOffset = 0f)
+        {
+            if (!HasReachArm) return worldPoint;
+            Vector3 shoulder = rightArm.position;
+            Vector3 v = worldPoint - shoulder;
+            float d = v.magnitude;
+            if (d < 1e-5f) return shoulder + transform.forward * (ArmReach * 0.5f);
+
+            float max = ArmReach * 0.97f + gripOffset;
+            float min = Mathf.Abs(_upperArmLen - _forearmLen) + ArmReach * 0.22f + gripOffset;
+            float clamped = Mathf.Clamp(d, min, max);
+            return Mathf.Approximately(clamped, d) ? worldPoint : shoulder + v * (clamped / d);
         }
 
         /// <summary>
-        /// Set each frame by <see cref="FruitEatController"/> while a pick/eat sequence runs: aims the
-        /// RIGHT arm at a world target, blended over whatever pose the swing (or an Animator) produced.
-        /// Blend 0 hands the arm back untouched. Consumed every LateUpdate.
+        /// Pose the right arm so its palm lands on <paramref name="worldTarget"/>, blended over whatever
+        /// the walk swing (or an Animator clip) produced. IMMEDIATE MODE: call this from a LateUpdate that
+        /// runs after this component's own — see <see cref="HandActionController"/>, which owns the eat
+        /// and pet sequences — and simply stop calling it to hand the arm back.
+        ///
+        /// Two-bone analytic IK. Segment directions are measured live from world positions rather than
+        /// assumed from the bones' authored axes, exactly like the walk swing, so a Biped, a Mixamo rig
+        /// and the primitive placeholder all solve identically.
         /// </summary>
-        public void SetReach(Vector3 worldTarget, float blend01)
+        /// <param name="gripOffset">How far short of the target the WRIST stops, so an object of that
+        /// radius sits in the palm rather than through it.</param>
+        public void ApplyHandTargetNow(Vector3 worldTarget, float blend01, float gripOffset = 0f)
         {
-            _reachTarget = worldTarget;
-            _reachBlend = Mathf.Clamp01(blend01);
-        }
+            float blend = Mathf.Clamp01(blend01);
+            if (blend <= 0.001f || rightArm == null) return;
 
-        // Same world-space bone-driving idea as the swing: rotate the upper arm so its actual length
-        // axis (shoulder -> elbow, measured live) points at the target — the rig's authored axes never
-        // matter. Applied LAST so the reach wins over the swing for that arm.
-        void ApplyReach()
-        {
-            if (_reachBlend <= 0.001f || rightArm == null) return;
+            Vector3 shoulder = rightArm.position;
+            Vector3 to = worldTarget - shoulder;
+            if (to.sqrMagnitude < 1e-8f) return;
+            float dist = to.magnitude;
+            Vector3 dir = to / dist;
 
-            Vector3 boneDir = rightForearm != null
-                ? rightForearm.position - rightArm.position
-                : -rightArm.up;
-            Vector3 want = _reachTarget - rightArm.position;
-            if (boneDir.sqrMagnitude < 1e-8f || want.sqrMagnitude < 1e-8f) return;
+            if (!HasReachArm)
+            {
+                // Single-bone fallback: aim the upper arm and let the rest of the limb follow.
+                Vector3 boneDir = rightForearm != null ? rightForearm.position - shoulder : -rightArm.up;
+                if (boneDir.sqrMagnitude < 1e-8f) return;
+                rightArm.rotation = Quaternion.Slerp(rightArm.rotation,
+                    Quaternion.FromToRotation(boneDir.normalized, dir) * rightArm.rotation, blend);
+                GripPoint = WristPosition;
+                return;
+            }
 
-            Quaternion goal = Quaternion.FromToRotation(boneDir.normalized, want.normalized) * rightArm.rotation;
-            rightArm.rotation = Quaternion.Slerp(rightArm.rotation, goal, _reachBlend);
+            // The wrist stops short of the target by the grip offset; the palm is what lands on it.
+            float wristDist = Mathf.Clamp(dist - gripOffset,
+                                          Mathf.Abs(_upperArmLen - _forearmLen) + ArmReach * 0.05f,
+                                          ArmReach * 0.999f);
+
+            // Law of cosines: the angle between the upper arm and the shoulder->wrist line.
+            float cosShoulder = (_upperArmLen * _upperArmLen + wristDist * wristDist - _forearmLen * _forearmLen)
+                                / (2f * _upperArmLen * wristDist);
+            float shoulderAngle = Mathf.Acos(Mathf.Clamp(cosShoulder, -1f, 1f)) * Mathf.Rad2Deg;
+
+            // Bend plane. Rotating the shoulder->wrist direction about (dir x pole) by a POSITIVE angle
+            // swings it toward the pole, so a pole of "down and out to the right" drops the elbow the way
+            // a real arm folds — and keeps the forearm across the lower visor instead of edge-on.
+            Vector3 pole = -transform.up + transform.right * reachElbowOut;
+            Vector3 bendAxis = Vector3.Cross(dir, pole);
+            if (bendAxis.sqrMagnitude < 1e-6f) bendAxis = Vector3.Cross(dir, transform.forward);
+            if (bendAxis.sqrMagnitude < 1e-6f) return;
+            bendAxis.Normalize();
+
+            Vector3 upperWant = Quaternion.AngleAxis(shoulderAngle, bendAxis) * dir;
+            Vector3 wristWant = shoulder + dir * wristDist;
+
+            Vector3 upperNow = rightForearm.position - shoulder;
+            if (upperNow.sqrMagnitude > 1e-10f)
+                rightArm.rotation = Quaternion.Slerp(rightArm.rotation,
+                    Quaternion.FromToRotation(upperNow.normalized, upperWant) * rightArm.rotation, blend);
+
+            // Re-read the elbow: it moved with the upper arm above.
+            Vector3 elbow = rightForearm.position;
+            Vector3 lowerNow = WristPosition - elbow;
+            Vector3 lowerWant = wristWant - elbow;
+            if (lowerNow.sqrMagnitude > 1e-10f && lowerWant.sqrMagnitude > 1e-10f)
+                rightForearm.rotation = Quaternion.Slerp(rightForearm.rotation,
+                    Quaternion.FromToRotation(lowerNow.normalized, lowerWant.normalized) * rightForearm.rotation,
+                    blend);
+
+            // Report the palm from the pose that actually resulted, so a carried object tracks the hand
+            // exactly even while the blend is still easing in.
+            Vector3 wrist = WristPosition;
+            Vector3 palmDir = wrist - rightForearm.position;
+            GripPoint = wrist + (palmDir.sqrMagnitude > 1e-10f ? palmDir.normalized : dir) * gripOffset;
         }
     }
 }

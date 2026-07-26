@@ -7,13 +7,22 @@ using NasaSim;
 namespace NasaSim.EditorTools
 {
     /// <summary>
-    /// Scatters GrassClump.fbx instances over the mowable field so the tractor has real grass to flatten
-    /// (Tools &gt; NASA Sim &gt; Grass), wires the <see cref="MowingVisual_GrassAndFlowers"/> onto the
-    /// mower, and auto-classifies the logo's pen strokes into NASA colors for the flower drops.
+    /// Everything under Tools &gt; NASA Sim &gt; Grass.
     ///
-    /// Clumps stay linked prefab instances of the FBX, so re-exporting GrassClump.fbx from Maya updates
-    /// the whole field. Their material is copied once to Assets/_Project/Materials/GrassClump.mat with
-    /// GPU instancing ON (the embedded FBX material is immutable and can't have instancing enabled).
+    /// <b>Build Mowable Grass</b> is the one that matters: it plants the field of standing blades
+    /// (<see cref="MowableGrass"/>) the tractor actually cuts down. Blades are generated from a seed at
+    /// load, never serialized, so the field costs nothing in the scene file however dense it is.
+    ///
+    /// The window below scatters GrassClump.fbx instances — the modelled TUFTS that sit on top of the
+    /// blade field for variety. They are real GameObjects (1500 of them is already most of this scene's
+    /// YAML), so they are optional decoration now rather than the grass itself; Remove Scattered Clumps
+    /// takes them out again. Clumps stay linked prefab instances, so re-exporting GrassClump.fbx from Maya
+    /// updates the whole field, and their material is copied once to
+    /// Assets/_Project/Materials/GrassClump.mat with GPU instancing ON (the embedded FBX material is
+    /// immutable and can't have instancing enabled).
+    ///
+    /// This class also wires <see cref="MowingVisual_GrassAndFlowers"/> onto the mower and auto-classifies
+    /// the logo's pen strokes into NASA colors for the flower drops.
     /// </summary>
     public sealed class GrassFieldTool : EditorWindow
     {
@@ -25,20 +34,24 @@ namespace NasaSim.EditorTools
 
         const string ClumpPath = "Assets/_Project/Models/GrassClump.fbx";
         const string ClumpMatPath = "Assets/_Project/Materials/GrassClump.mat";
+        const string BladeMatPath = "Assets/_Project/Materials/GrassBlades.mat";
 
-        [MenuItem("Tools/NASA Sim/Grass/Scatter Grass Field")]
+        [MenuItem("Tools/NASA Sim/Grass/Scatter Grass Tufts")]
         public static void Open()
         {
-            var w = GetWindow<GrassFieldTool>(true, "Scatter Grass Field", true);
+            var w = GetWindow<GrassFieldTool>(true, "Scatter Grass Tufts", true);
             w.minSize = new Vector2(420f, 300f);
         }
 
         void OnGUI()
         {
             EditorGUILayout.HelpBox(
-                "Scatters GrassClump.fbx over the mowable field (the green Grass plane by default). " +
-                "Re-running clears and rescatters. Run the biodome collider wiring first so scatter " +
-                "avoids stairs/pillars.", MessageType.Info);
+                "Optional decoration. The grass the tractor MOWS is the blade field — " +
+                "Tools > NASA Sim > Grass > Build Mowable Grass.\n\n" +
+                "This scatters GrassClump.fbx tufts on top of it for extra silhouette. They are real " +
+                "GameObjects and get saved into the scene, so keep the density low. Re-running clears and " +
+                "rescatters; run the biodome collider wiring first so scatter avoids stairs/pillars.",
+                MessageType.Info);
 
             density = EditorGUILayout.Slider(new GUIContent("Density (clumps/m²)"), density, 0.1f, 3f);
             jitter = EditorGUILayout.Slider(new GUIContent("Jitter", "Random offset within each grid cell."), jitter, 0f, 0.5f);
@@ -52,11 +65,8 @@ namespace NasaSim.EditorTools
             EditorGUILayout.Space();
             if (GUILayout.Button("Scatter / Rescatter", GUILayout.Height(30f)))
                 Scatter(density, jitter, clumpSize, useGrassPlaneBounds, circleRadius);
-            if (GUILayout.Button("Remove Grass Field"))
-            {
-                var root = GameObject.Find("GrassField");
-                if (root != null) Undo.DestroyObjectImmediate(root);
-            }
+            if (GUILayout.Button("Remove Scattered Tufts"))
+                RemoveScatteredClumps();
         }
 
         /// <summary>Programmatic default for the full-vision setup chain.</summary>
@@ -217,6 +227,130 @@ namespace NasaSim.EditorTools
             return mat;
         }
 
+        // ------------------------------------------------------------------ the blade field
+
+        /// <summary>
+        /// Plants the field of standing grass the tractor cuts down, sizes it to the biodome's Grass plane,
+        /// gives it a project material you can tune, and hands it to the mowing visual. Safe to re-run —
+        /// it finds the existing object and rebuilds in place.
+        /// </summary>
+        [MenuItem("Tools/NASA Sim/Grass/Build Mowable Grass")]
+        public static void BuildMowableGrass()
+        {
+            var go = GameObject.Find("MowableGrass");
+            if (go == null)
+            {
+                go = new GameObject("MowableGrass");
+                Undo.RegisterCreatedObjectUndo(go, "Build Mowable Grass");
+            }
+            // The component reads world bounds and plants in world space; a moved or scaled root would
+            // only be confusing.
+            go.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+            go.transform.localScale = Vector3.one;
+
+            var grass = go.GetComponent<MowableGrass>();
+            if (grass == null) grass = Undo.AddComponent<MowableGrass>(go);
+            Undo.RecordObject(grass, "Build Mowable Grass");
+
+            if (grass.groundRenderer == null)
+            {
+                var plane = GameObject.Find("Grass");
+                if (plane != null) grass.groundRenderer = plane.GetComponent<Renderer>();
+            }
+            if (grass.groundRenderer == null)
+                Debug.LogWarning("[MowableGrass] No 'Grass' plane found — falling back to a " +
+                                 $"{grass.fallbackFieldSize} m square around the origin. Assign Ground " +
+                                 "Renderer by hand if the field is somewhere else.", grass);
+
+            if (grass.material == null) grass.material = GetOrCreateBladeMaterial();
+
+            var vis = Object.FindAnyObjectByType<MowingVisual_GrassAndFlowers>();
+            if (vis != null)
+            {
+                Undo.RecordObject(vis, "Build Mowable Grass");
+                vis.mowableGrass = grass;
+                EditorUtility.SetDirty(vis);
+            }
+            else
+            {
+                Debug.LogWarning("[MowableGrass] No grass mowing visual on the mower — run " +
+                                 "Tools > NASA Sim > Grass > Add Grass Mowing Visual, and the field will " +
+                                 "be found automatically. Until then nothing will cut it.");
+            }
+
+            grass.Rebuild();
+            EditorUtility.SetDirty(grass);
+            EditorSceneManager.MarkSceneDirty(go.scene);
+
+            int tufts = 0;
+            var clumpRoot = GameObject.Find("GrassField");
+            if (clumpRoot != null) tufts = clumpRoot.transform.childCount;
+
+            Debug.Log($"[MowableGrass] {grass.BladeCount:N0} blades standing (editor preview is " +
+                      $"{grass.editorPreviewFraction:P0} of Density — play mode builds the full field). " +
+                      "The tractor cuts them as it drives; press R to stand them all back up.\n" +
+                      "  Tune height, density and colours on the MowableGrass component and " +
+                      $"{BladeMatPath}.\n" +
+                      (tufts > 0
+                          ? $"  The {tufts} scattered GrassClump tufts are still there on top. They are " +
+                            "real GameObjects and most of this scene's file size — Tools > NASA Sim > " +
+                            "Grass > Remove Scattered Tufts drops them if the blades are enough."
+                          : "  No scattered tufts in the scene; the blade field is the whole grass."),
+                      grass);
+        }
+
+        [MenuItem("Tools/NASA Sim/Grass/Remove Mowable Grass")]
+        public static void RemoveMowableGrass()
+        {
+            var go = GameObject.Find("MowableGrass");
+            if (go == null)
+            {
+                Debug.Log("[MowableGrass] Nothing to remove.");
+                return;
+            }
+            Undo.DestroyObjectImmediate(go);
+            Debug.Log("[MowableGrass] Blade field removed. The generated meshes go with it — nothing of " +
+                      "it was ever in the scene file.");
+        }
+
+        /// <summary>
+        /// A project material so the grass colours, wind and mown height are tunable (and versioned)
+        /// rather than living on a runtime-only material.
+        /// </summary>
+        static Material GetOrCreateBladeMaterial()
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<Material>(BladeMatPath);
+            if (existing != null) return existing;
+
+            Shader sh = Shader.Find("NasaSim/Grass");
+            if (sh == null)
+            {
+                Debug.LogWarning("[MowableGrass] NasaSim/Grass shader not found — did " +
+                                 "Assets/_Project/Shaders/NasaSimGrass.shader import cleanly? The field " +
+                                 "will fall back to a flat unlit material that ignores the mower.");
+                return null;
+            }
+
+            var mat = new Material(sh) { name = "GrassBlades" };
+            AssetDatabase.CreateAsset(mat, BladeMatPath);
+            return mat;
+        }
+
+        [MenuItem("Tools/NASA Sim/Grass/Remove Scattered Tufts")]
+        public static void RemoveScatteredClumps()
+        {
+            var root = GameObject.Find("GrassField");
+            if (root == null)
+            {
+                Debug.Log("[GrassField] No scattered tufts in the scene.");
+                return;
+            }
+            int n = root.transform.childCount;
+            Undo.DestroyObjectImmediate(root);
+            Debug.Log($"[GrassField] Removed {n} scattered GrassClump tufts. The blade field " +
+                      "(Build Mowable Grass) is unaffected.");
+        }
+
         // ------------------------------------------------------------------ mower wiring + colors
 
         [MenuItem("Tools/NASA Sim/Grass/Add Grass Mowing Visual")]
@@ -234,13 +368,14 @@ namespace NasaSim.EditorTools
 
             var field = GameObject.Find("GrassField");
             vis.grassFieldRoot = field != null ? field.transform : null;
+            vis.mowableGrass = Object.FindAnyObjectByType<MowableGrass>();
             var follower = Object.FindAnyObjectByType<TractorPathFollower>();
             vis.tractor = follower != null ? follower.transform : null;
 
             EditorUtility.SetDirty(vis);
             EditorSceneManager.MarkSceneDirty(mower.gameObject.scene);
-            Debug.Log("[GrassField] Grass mowing visual wired beside the trail ribbon (MowerController " +
-                      "forwards to both). Palette Mode = Logo Auto classifies the strokes itself every " +
+            Debug.Log("[GrassField] Grass mowing visual wired to the mower. " +
+                      "Palette Mode = Logo Auto classifies the strokes itself every " +
                       "run — circle blue, swoosh red, orbit and letters white, star dots mown but not " +
                       "flowered — so there is nothing to maintain. Run Grass > Auto-Assign Stroke Colors " +
                       "only if you want a per-stroke list to hand-edit.", vis);

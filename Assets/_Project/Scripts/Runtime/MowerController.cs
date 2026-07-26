@@ -3,8 +3,9 @@ using UnityEngine;
 namespace NasaSim
 {
     /// <summary>
-    /// The mowing visual, abstracted so the flat TrailRenderer used in Milestone 1 can be swapped for a
-    /// RenderTexture grass-paint implementation later without touching the tractor or CSV code.
+    /// The mowing visual, abstracted so how the cut is DRAWN (Milestone 1 laid a flat ribbon on the
+    /// floor; <see cref="MowingVisual_GrassAndFlowers"/> now cuts real blades) can change without
+    /// touching the tractor or CSV code.
     /// </summary>
     public interface IMowingVisual
     {
@@ -21,15 +22,15 @@ namespace NasaSim
     /// <summary>
     /// Thin facade the <see cref="TractorPathFollower"/> talks to. Forwards every mow event to ALL
     /// <see cref="IMowingVisual"/> implementations found — the explicitly assigned ones plus anything on
-    /// this GameObject or its children — so the flat trail ribbon (the crisp "cut" mark) and the
-    /// grass-flattening/flower visual run side by side without either knowing about the other.
+    /// this GameObject or its children — so several visuals can run side by side without either knowing
+    /// about the other.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class MowerController : MonoBehaviour
     {
-        [Tooltip("A component implementing IMowingVisual (e.g. MowingVisual_Trail). Kept as a single slot " +
-                 "for scene compatibility; anything else implementing IMowingVisual on this object or its " +
-                 "children is picked up automatically as well.")]
+        [Tooltip("A component implementing IMowingVisual (e.g. MowingVisual_GrassAndFlowers). Kept as a " +
+                 "single slot for scene compatibility; anything else implementing IMowingVisual on this " +
+                 "object or its children is picked up automatically as well.")]
         [SerializeField] MonoBehaviour visualBehaviour;
         [Tooltip("Additional IMowingVisual components. Every entry (and every implementation found in " +
                  "children) receives every mow event.")]
