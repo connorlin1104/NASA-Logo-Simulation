@@ -25,6 +25,10 @@ namespace NasaSim
         /// <summary>Which of the axle transform's own local axes runs along the axle.</summary>
         public enum AxleAxis { X, Y, Z }
 
+        /// <summary>See <see cref="steerWheelSelection"/>. AutoFront is the default, so a freshly
+        /// imported tractor steers on its front wheels with nothing to wire up.</summary>
+        public enum SteerWheelSelection { AutoFront, AutoRear, Manual }
+
         /// <summary>
         /// One purely-visual wheel: a mesh, and the transform it pivots about. Entries are completely
         /// independent of one another - different pivots, orientations and sizes are all fine.
@@ -114,7 +118,15 @@ namespace NasaSim
         public bool showWheelGizmos = true;
 
         [Header("Steering (visual)")]
-        [Tooltip("Optional front wheels that visually yaw toward the turn direction.")]
+        [Tooltip("Which wheels visually yaw through corners.\n\n" +
+                 "Auto Front (default) picks the two wheels whose measured HUBS sit furthest forward " +
+                 "along the tractor's own +Z at the start of every run, and fills Steer Wheels in with " +
+                 "them — so it stays right after a rescale, a re-import or a Rotate Model 90.\n\n" +
+                 "Auto Rear steers the back pair instead (forklift-style). Manual leaves Steer Wheels " +
+                 "exactly as you set it.")]
+        public SteerWheelSelection steerWheelSelection = SteerWheelSelection.AutoFront;
+        [Tooltip("The wheel pivots that yaw toward the turn direction — the front Axle_* objects. " +
+                 "Filled in automatically unless Steer Wheel Selection is Manual.")]
         public Transform[] steerWheels;
         public float maxSteerAngleDeg = 28f;
 
@@ -167,11 +179,29 @@ namespace NasaSim
         float _heading;          // body yaw in degrees; position may ONLY advance along this
         int _edgeHint;           // amortised O(1) segment lookup (s moves smoothly)
         int _lastCrossedIndex;   // for onWaypointReached
+        int _penEdge;            // edge the pen was last evaluated on (see UpdatePenFromArc)
         float _steerAngle;       // smoothed visual front-wheel angle
-        Quaternion[] _steerRest; // steer wheels' rest local rotations (so steering composes, not stomps)
+        // Steer bind: rest pose plus the point to swing about. A wheel must yaw around ITS OWN HUB, and
+        // an exported axle's transform origin is usually back at the model origin, metres away from it.
+        Transform[] _steerBound;     // exactly which transforms the caches below describe
+        Quaternion[] _steerRest;     // rest local rotation (so steering composes, not stomps)
+        Vector3[] _steerRestPos;     // rest local position
+        Vector3[] _steerHubLocal;    // the hub, in the steer transform's PARENT local space
+        Vector3[] _steerAxisLocal;   // the steering axis (tractor up), in that same parent space
 
         public WaypointPath Path => _path;
         public bool IsRunning => _running;
+
+        /// <summary>
+        /// The waypoint the mower is currently drawing INTO — the same index <see cref="MowerWorldPos"/>
+        /// takes the render layer from.
+        ///
+        /// Mowing visuals should identify the stroke being drawn from THIS rather than by counting
+        /// pen-down transitions: a stroke smaller than the look-ahead (the logo's stars are ~0.3 m across
+        /// against a 0.6–1.2 m look-ahead) can be leapt over entirely inside one sub-step, so the count
+        /// silently runs behind the real stroke number and every colour after it is shifted.
+        /// </summary>
+        public int CurrentWaypointIndex { get; private set; }
 
         void Start()
         {
@@ -208,6 +238,7 @@ namespace NasaSim
                 _lastCrossedIndex = 0;
                 _steerAngle = 0f;
                 SnapToArc();
+                SyncPenEdge();
                 UpdatePenFromArc();           // SetPen seeds the mower at the current brush position
             }
             else
@@ -234,6 +265,12 @@ namespace NasaSim
             // another permanent toe offset into the front wheels.
             ApplySteerAngle(0f);
             _steerAngle = 0f;
+            // ...and put the wheel MESHES back on their straightened axles before re-binding. The mesh is
+            // typically a SIBLING of the axle, not a child (Wheels/FrontLeft holds [Axle, WheelParts]), so
+            // straightening the axle does not move it — and ResolveWheels would then capture a mid-corner
+            // steer angle as the mesh's new rest pose, welding a permanent toe offset into the front
+            // wheels on every R-restart taken in a corner.
+            RestoreWheelRestPose();
             ResolveSteerWheels();
 
             ResolveWheels();
@@ -291,6 +328,28 @@ namespace NasaSim
                 }
 
                 _wheels[i] = rt;
+            }
+        }
+
+        /// <summary>
+        /// Re-pose every already-bound wheel mesh from its axle at zero spin — exactly where the previous
+        /// bind found it. Idempotent: re-binding straight afterwards reads back the same rest values, so
+        /// restarting the run can never accumulate an offset (of steering OR of spin phase) into the mesh.
+        /// A no-op on the first run, when nothing is bound yet.
+        /// </summary>
+        void RestoreWheelRestPose()
+        {
+            if (_wheels == null) return;
+            for (int i = 0; i < _wheels.Length; i++)
+            {
+                var w = _wheels[i];
+                if (w.mesh == null) continue;
+                if (w.axle == null) w.mesh.localRotation = w.restRot;
+                else
+                    w.mesh.SetPositionAndRotation(w.axle.TransformPoint(w.pivotLocal + w.restPos),
+                                                  w.axle.rotation * w.restRot);
+                w.angle = 0f;
+                _wheels[i] = w;
             }
         }
 
@@ -455,6 +514,7 @@ namespace NasaSim
             }
             _s = bestS;
             _lastCrossedIndex = EdgeAtArc(_s);
+            SyncPenEdge();
         }
 
         // ================================================================== exact path (original)
@@ -712,7 +772,32 @@ namespace NasaSim
             }
         }
 
-        void UpdatePenFromArc() => SetPen(EdgePenDown(EdgeAtArc(_s)));
+        /// <summary>
+        /// Set the pen from the arc position, checking the WHOLE span crossed since the last evaluation
+        /// rather than only the edge we landed on. The projection can leap several edges in one sub-step
+        /// — a stroke shorter than the look-ahead is skipped bodily — and if a pen-up edge inside that
+        /// span goes unobserved the pen never lifts, so the mower drags a connector straight across the
+        /// gap and the stroke count runs behind. Collapsing the span into a single lift breaks the
+        /// connector and starts the next stroke where the tractor actually is.
+        /// </summary>
+        void UpdatePenFromArc()
+        {
+            int to = EdgeAtArc(_s);
+            bool down = EdgePenDown(to);
+
+            if (down && _penEdge != to)
+            {
+                int lo = Mathf.Min(_penEdge, to), hi = Mathf.Max(_penEdge, to);
+                for (int e = lo; e <= hi; e++)
+                    if (!EdgePenDown(e)) { SetPen(false); break; }
+            }
+
+            SetPen(down);
+            _penEdge = to;
+        }
+
+        /// <summary>Re-base the pen span after a deliberate jump in _s (start, wrap, pen-up skip).</summary>
+        void SyncPenEdge() => _penEdge = EdgeAtArc(_s);
 
         /// <summary>Jump the arc position across pen-up edges (teleportOnPenUp). Returns false at path end.</summary>
         bool SkipToNextPenDown()
@@ -739,6 +824,7 @@ namespace NasaSim
                 _lastCrossedIndex = i + 1;
             }
             SnapToArc();
+            SyncPenEdge();                    // the jump is deliberate, not a missed lift
             UpdatePenFromArc();
             return true;
         }
@@ -767,6 +853,7 @@ namespace NasaSim
                     _edgeHint = 0;
                     _lastCrossedIndex = 0;
                     SnapToArc();
+                    SyncPenEdge();
                     UpdatePenFromArc();       // SetPen seeds the mower at the wrapped start position
                     return true;
 
@@ -775,6 +862,7 @@ namespace NasaSim
                     _sDir = -_sDir;
                     _s = Mathf.Clamp(_s, 0f, _totalLen);
                     _lastCrossedIndex = Mathf.Clamp(_lastCrossedIndex, 0, _path.Count - 1);
+                    SyncPenEdge();
                     UpdatePenFromArc();
                     return true;
 
@@ -889,6 +977,7 @@ namespace NasaSim
             else
                 edgeHi = _dir > 0 ? _index : _index + 1;
             edgeHi = Mathf.Clamp(edgeHi, 1, _path.Count - 1);
+            CurrentWaypointIndex = edgeHi;
             return new Vector3(a.x, _path.Points[edgeHi].position.y, a.z);
         }
 
@@ -942,26 +1031,122 @@ namespace NasaSim
         }
 
         /// <summary>
-        /// Capture the steer wheels' rest local rotations so steering COMPOSES with them — the steer
-        /// wheels are usually the front Axle_* pivots, and writing raw Euler angles would stomp whatever
-        /// orientation they were authored with. Re-run at the start of every run (with the steering
-        /// centred first), so wheel meshes bind their spin pose against the un-steered axle.
+        /// Pick the steer wheels (unless Manual) and bind them: rest pose, so steering COMPOSES with the
+        /// orientation they were authored with instead of stomping it, plus the HUB each one must swing
+        /// about. Re-run at the start of every run, with the steering centred first, so wheel meshes bind
+        /// their spin pose against the un-steered axle.
         /// </summary>
         void ResolveSteerWheels()
         {
+            if (steerWheelSelection != SteerWheelSelection.Manual) AutoPickSteerWheels();
+
             int n = steerWheels != null ? steerWheels.Length : 0;
-            if (_steerRest == null || _steerRest.Length != n) _steerRest = new Quaternion[n];
+            if (_steerRest == null || _steerRest.Length != n)
+            {
+                _steerBound = new Transform[n];
+                _steerRest = new Quaternion[n];
+                _steerRestPos = new Vector3[n];
+                _steerHubLocal = new Vector3[n];
+                _steerAxisLocal = new Vector3[n];
+            }
+
             for (int i = 0; i < n; i++)
-                if (steerWheels[i] != null) _steerRest[i] = steerWheels[i].localRotation;
+            {
+                Transform t = steerWheels[i];
+                _steerBound[i] = t;
+                if (t == null)
+                {
+                    _steerRest[i] = Quaternion.identity;
+                    _steerRestPos[i] = Vector3.zero;
+                    _steerHubLocal[i] = Vector3.zero;
+                    _steerAxisLocal[i] = Vector3.up;
+                    continue;
+                }
+
+                _steerRest[i] = t.localRotation;
+                _steerRestPos[i] = t.localPosition;
+
+                Transform parent = t.parent;
+                Vector3 hub = SteerHubWorld(t);
+                _steerHubLocal[i] = parent != null ? parent.InverseTransformPoint(hub) : hub;
+                Vector3 axis = parent != null ? parent.InverseTransformDirection(transform.up) : transform.up;
+                _steerAxisLocal[i] = axis.sqrMagnitude > 1e-8f ? axis.normalized : Vector3.up;
+            }
         }
 
+        /// <summary>
+        /// Where this steer pivot's wheel actually sits. Uses the same measurement the wheel spin does, so
+        /// steering and rolling turn about exactly the same point.
+        /// </summary>
+        Vector3 SteerHubWorld(Transform axle)
+        {
+            if (wheels != null)
+                foreach (var w in wheels)
+                    if (w != null && w.axle == axle &&
+                        TryGetWheelAxis(w, out Vector3 hub, out _, out _, out _))
+                        return hub;
+            return AxlePivotPoint(axle, null);
+        }
+
+        /// <summary>
+        /// Fill <see cref="steerWheels"/> with the front (or rear) pair, chosen by each wheel's MEASURED
+        /// hub position along the tractor's own +Z. Measured, not transform origin: an FBX exported with
+        /// frozen transforms gives every wheel the same pivot back at the model origin, which makes
+        /// sorting on <c>axle.position</c> a coin toss — that is how a rear wheel ends up steering.
+        /// </summary>
+        void AutoPickSteerWheels()
+        {
+            int count = wheels != null ? Mathf.Min(wheels.Length, MaxWheels) : 0;
+            if (count < 2) return;
+
+            Transform bestA = null, bestB = null;
+            float zA = 0f, zB = 0f;
+
+            for (int i = 0; i < count; i++)
+            {
+                var w = wheels[i];
+                if (w == null || w.axle == null) continue;
+                if (w.axle == bestA || w.axle == bestB) continue;   // two meshes may share one axle
+
+                // SteerHubWorld, not TryGetWheelAxis: the latter reports failure for a wheel with no
+                // mesh assigned, and dropping that wheel from the comparison would silently leave a
+                // stale front/rear pair in place. The axle's own bounds are enough to place it.
+                float z = transform.InverseTransformPoint(SteerHubWorld(w.axle)).z;
+                if (steerWheelSelection == SteerWheelSelection.AutoRear) z = -z;
+
+                if (bestA == null || z > zA) { bestB = bestA; zB = zA; bestA = w.axle; zA = z; }
+                else if (bestB == null || z > zB) { bestB = w.axle; zB = z; }
+            }
+
+            if (bestA == null || bestB == null) return;         // not enough axles: leave the list alone
+            if (steerWheels == null || steerWheels.Length != 2) steerWheels = new Transform[2];
+            steerWheels[0] = bestA;
+            steerWheels[1] = bestB;
+        }
+
+        /// <summary>
+        /// Yaw the steer wheels about their own hubs. Rotating the pivot in place would be wrong whenever
+        /// the axle's transform origin is not at the hub — the wheel would swing through an arc around
+        /// the middle of the tractor instead of turning on the spot — so the pivot is rotated ABOUT the
+        /// hub: its local position swings with it. That leaves the hub itself fixed in world space, which
+        /// is exactly what <see cref="SpinWheels"/> already binds against.
+        /// </summary>
         void ApplySteerAngle(float steerDeg)
         {
-            if (steerWheels == null || _steerRest == null) return;
+            if (steerWheels == null || _steerBound == null || _steerRest == null ||
+                _steerRestPos == null || _steerHubLocal == null || _steerAxisLocal == null) return;
             int n = Mathf.Min(steerWheels.Length, _steerRest.Length);
             for (int i = 0; i < n; i++)
-                if (steerWheels[i] != null)
-                    steerWheels[i].localRotation = _steerRest[i] * Quaternion.AngleAxis(steerDeg, Vector3.up);
+            {
+                Transform t = steerWheels[i];
+                // The caches are keyed by slot, so only touch a slot still holding the transform they
+                // were measured from — otherwise a list edited between runs would have one wheel's hub
+                // and rest pose written onto another.
+                if (t == null || t != _steerBound[i]) continue;
+                Quaternion q = Quaternion.AngleAxis(steerDeg, _steerAxisLocal[i]);
+                t.localRotation = q * _steerRest[i];
+                t.localPosition = _steerHubLocal[i] + q * (_steerRestPos[i] - _steerHubLocal[i]);
+            }
         }
 
 #if UNITY_EDITOR

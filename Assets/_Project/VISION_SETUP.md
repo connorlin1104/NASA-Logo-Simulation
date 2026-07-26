@@ -27,7 +27,7 @@ without jumping → **C** for the free-fly camera to admire the finished flower 
 | 6 | `Biodome ▸ Wire Colliders & Spawn Outside` | COL_/NOCOL_ colliders on the dome + tunnel, `SPAWN_Outside` marker, astronaut moved there |
 | 7 | `Setup ▸ Add Interaction System & UI` | The "[E] …" prompt UI + proximity sensor + eat controller; camera defaults to first person |
 | 8 | `Biodome ▸ Build Airlock In Tunnel` | Doors, buttons, chamber sensor, gas vents, full pressurize cycle |
-| 9 | `Tractor ▸ Wire Steer Wheels From Axles` | Front axles steer visually with the new realistic driving model |
+| 9 | `Tractor ▸ Wire Steer Wheels From Axles` | *(optional — the follower now does this itself)* Fills Steer Wheels in at edit time so you can see the choice, and logs every wheel's measured hub position |
 | 10 | `Water ▸ Create Water Body` (Moat preset) | The moat ring (r 27–31 m) around the logo: animated water + mud basin with collider |
 | 11 | `Water ▸ Spawn Ducks & Fish` | 3 pattable ducks + 8 fish in the moat (re-run per pond, counts adjustable) |
 | 12 | `Grass ▸ Scatter Grass Field`, then `Grass ▸ Add Grass Mowing Visual` | ~1,700 GPU-instanced clumps over the field; mower flattens them and throws logo-colored flowers |
@@ -72,14 +72,65 @@ ripple surface needs a dense even grid that's generated, not modelled. Maya supp
 geometry (`COL_`) and `WATER_` locators; `Water ▸ Create Water Body` does the rest. Extra ponds:
 Pond preset (or a `WATER_` locator) → `Spawn Ducks & Fish` on it. Done.
 
-## 5. Flower colors
+## 5. Flowers: where they land and what color they are
 
-Flowers use **per-stroke NASA colors**: `Grass ▸ Auto-Assign Stroke Colors` classifies the CSV's pen
-strokes (near-logo-sized round stroke → **blue disc**, very wide flat stroke → **white orbit**, other
-wide strokes → **red swoosh**, small strokes → **white letters**). It's a heuristic with an editable
-result: select the tractor's **MowerBrush → Mowing Visual_Grass And Flowers → Stroke Colors** and
-recolor any stroke that guessed wrong. Alternatives on the same component: `SingleColor`, or
-`LogoTexture` (assign any readable NASA-logo image; sampled by position).
+All of this lives on the tractor's **MowerBrush → Mowing Visual_Grass And Flowers**.
+
+**They follow the mown line.** A flower is not thrown at a random angle and left to land where it
+may — the landing spot is picked first, ON the line the deck has just cut (from a rolling history of
+deck positions, so it tracks curves exactly), and the throw velocity is then *solved* so the arc ends
+exactly there. Three knobs shape it:
+
+| Field | What it does |
+|---|---|
+| `Land Back Distance` | how far behind the deck a flower lands, measured **along** the cut line (default 0.5–1.5 m) |
+| `Land Side Spread` | sideways scatter as a multiple of half the swath. `0` = a dead-straight single file, `1` = out to the swath edge, default `0.9` so flowers stay inside the cut |
+| `Arc Seconds` | flight time, i.e. how high and lazy the toss looks. Changing it does **not** move the landing spot |
+| `Flower Pool Limit` | `0` (default) sizes the pool from the logo — 573 m of line ÷ 0.6 m spacing = 955 bursts × 2 (the top of `Flowers Per Burst`) ≈ a **1 900** ceiling, against the ~1 280 actually thrown — so a finished mow never recycles a flower away. Set a number only to force a lower ceiling |
+
+Measured over a full simulated run: half the flowers land within 0.14 m of the mown line and none
+further than half the swath.
+
+**Colors are classified by shape, every run** (`Palette Mode = Logo Auto`, the default — nothing to
+set up). The shipped `nasa_logo_clean.csv` is 56 strokes:
+
+| Stroke(s) | What it is | Test | Result |
+|---|---|---|---|
+| **0** | the circle | the roundest stroke ≥40 % of the logo across (radius variation 0.014, vs 0.28 for the runner-up — not close) | `Circle Color`, NASA blue `#0B3D91` |
+| **41, 42, 43** | the red swoosh | every stroke ≥10 % across that **overhangs the circle**. 16–19 % of each of these three sits past the rim; every other stroke is at 0.0 % | `Swoosh Color`, NASA red `#FC3D21` |
+| **44, 45, 46** | the orbit ellipse | — | `Other Color`, white |
+| **47–49, 51–53, 55** | N A S A and their counters | — | `Other Color`, white |
+| **1–40, 50, 54** | the 40 star dots (+2 sub-metre letter slivers) | under 4 % of the logo across — the biggest star is 3.3 %, the smallest non-star 5.6 % | **no flowers** (see below) |
+
+The swoosh arrives as *three* strokes because the orbit and the letters cut the vector into pieces —
+so this is a set, not a single winner. Beware the test that looks right and isn't: "the swoosh is the
+big stroke inside the circle" picks the **orbit**, because the orbit is the one contained by the disc
+and the swoosh is the one that isn't. Thickness doesn't separate them either — the thinnest swoosh
+piece (0.62 m) is thinner than the fattest orbit piece (0.66 m). Overhang is the clean discriminator.
+
+The classification is printed to the Console on the first flower of each run, so you can check it at a
+glance. Because it tests shape rather than stroke number, re-exporting the CSV can't shift it.
+
+**The star dots are mown but throw no flowers** (`Flowers On Stars` off, the default): 42 loops of
+0.3–1.3 m read as speckle beside the circle and the letters, and the smallest are below the tractor's
+turning radius anyway. Turn it on to flower them like everything else. The mechanism is general —
+**a stroke color with alpha 0 throws nothing** — so in `Stroke List` mode you can silence any stroke by
+hand by dragging its alpha to 0.
+
+The stroke a flower belongs to comes from the tractor's **current waypoint**, not from counting pen
+lifts. That matters: the logo's stars are ~0.3 m across against a 0.6–1.2 m look-ahead, so the tractor
+leaps over eight of them bodily and a counter would end up eight strokes behind — painting the red
+swoosh white. Related: those leaps used to skip the pen lift too, dragging mown connector lines across
+the logo; the follower now checks the whole span of path it crossed, not just where it landed.
+
+Those eight stars stay unmown either way — with a ~1 m minimum turning radius the tractor physically
+cannot trace a 0.3 m circle. `Steering Mode = ExactPath` on the Tractor traces them exactly, at the
+cost of the natural cornering. With `Flowers On Stars` off this is invisible in the flower logo.
+
+Want per-stroke control? `Grass ▸ Auto-Assign Stroke Colors` bakes the same classification into an
+editable `Stroke Colors` list and flips `Palette Mode` to `Stroke List`; recolor any entry by hand. Set
+the mode back to `Logo Auto` to return to automatic. Also available: `Single Color`, and `Logo Texture`
+(assign any readable NASA-logo image; sampled by position).
 
 ## 6. Dropping in audio later
 
@@ -96,5 +147,14 @@ Every sound moment already has an empty `AudioClip` slot — import a clip and d
 
 - Tractor: **Realistic** pure-pursuit steering by default (~0.2 m corner rounding on the 40 m logo);
   `Steering Mode = ExactPath` on the Tractor restores the waypoint-exact original.
-- Flowers: **NASA logo colors** per stroke (editable list). Audio: **hooks only**.
+- Steer wheels: `Steer Wheel Selection = Auto Front` picks the front pair by **measured hub position**
+  at the start of every run. It has to be measured — this tractor's FBX was exported with frozen
+  transforms, so all four axle *pivots* sit on the model origin and sorting them by position is a coin
+  toss (which is how a rear wheel used to end up steering). `Auto Rear` and `Manual` are the escapes.
+  The wheels also yaw **about their own hubs** now, not about the model origin, so they turn on the
+  spot instead of swinging through an arc.
+- Flowers: **NASA logo colors**, classified by stroke shape every run (§5). The swoosh is found by
+  which strokes **overhang the circle** — the orbit ellipse is the one thing inside it, so an
+  inside-the-circle test picks precisely the wrong one of the two. Star dots are mown but not flowered.
+  Audio: **hooks only**.
 - Environment: user's existing sky + ground kept; walkability via `Bake Simplified Collider`.

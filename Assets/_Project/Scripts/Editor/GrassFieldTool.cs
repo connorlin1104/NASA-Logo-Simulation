@@ -237,13 +237,13 @@ namespace NasaSim.EditorTools
             var follower = Object.FindAnyObjectByType<TractorPathFollower>();
             vis.tractor = follower != null ? follower.transform : null;
 
-            AutoAssignStrokeColors(vis);
-
             EditorUtility.SetDirty(vis);
             EditorSceneManager.MarkSceneDirty(mower.gameObject.scene);
             Debug.Log("[GrassField] Grass mowing visual wired beside the trail ribbon (MowerController " +
-                      "forwards to both). Flowers use the auto-assigned per-stroke NASA colors — " +
-                      "hand-edit Stroke Colors on the visual if any stroke guessed wrong.", vis);
+                      "forwards to both). Palette Mode = Logo Auto classifies the strokes itself every " +
+                      "run — circle blue, swoosh red, orbit and letters white, star dots mown but not " +
+                      "flowered — so there is nothing to maintain. Run Grass > Auto-Assign Stroke Colors " +
+                      "only if you want a per-stroke list to hand-edit.", vis);
         }
 
         [MenuItem("Tools/NASA Sim/Grass/Auto-Assign Stroke Colors")]
@@ -258,13 +258,13 @@ namespace NasaSim.EditorTools
             }
             AutoAssignStrokeColors(vis);
             EditorUtility.SetDirty(vis);
+            EditorSceneManager.MarkSceneDirty(vis.gameObject.scene);
         }
 
         /// <summary>
-        /// Heuristic NASA-meatball classification of the CSV's pen strokes, in draw order (which is the
-        /// order the runtime counts them): the near-logo-sized round stroke is the BLUE disc, a very wide
-        /// but flat stroke is the WHITE orbit ellipse, other wide strokes are the RED swoosh, and small
-        /// strokes are the WHITE letters. A guess, deliberately stored in an editable list.
+        /// Bake the shape-based classification (<see cref="LogoStrokeClassifier"/>) into the visual's
+        /// per-stroke color list and switch it to that list, so individual strokes can be recolored by
+        /// hand. Purely optional: Logo Auto does the same classification every run without a list.
         /// </summary>
         static void AutoAssignStrokeColors(MowingVisual_GrassAndFlowers vis)
         {
@@ -275,53 +275,26 @@ namespace NasaSim.EditorTools
                 return;
             }
             var path = loader.Parse(loader.csvFile);
-            if (path == null || path.IsEmpty) return;
-
-            Color nasaBlue = new Color(0.043f, 0.239f, 0.569f, 1f);   // #0B3D91
-            Color nasaRed = new Color(0.988f, 0.239f, 0.129f, 1f);    // #FC3D21
-
-            var colors = new List<Color>();
-            int blue = 0, red = 0, white = 0;
-            Bounds logo = path.Bounds;
-
-            bool inStroke = false;
-            Bounds sb = default;
-            void CloseStroke()
+            if (path == null || path.IsEmpty)
             {
-                if (!inStroke) return;
-                float w = sb.size.x / Mathf.Max(0.01f, logo.size.x);
-                float h = sb.size.z / Mathf.Max(0.01f, logo.size.z);
-                Color c;
-                if (w > 0.85f && h > 0.85f) { c = nasaBlue; blue++; }          // the disc
-                else if (w > 0.9f && h < 0.6f) { c = Color.white; white++; }   // the orbit ellipse
-                else if (w > 0.55f || h > 0.55f) { c = nasaRed; red++; }       // the swoosh
-                else { c = Color.white; white++; }                             // letters
-                colors.Add(c);
-                inStroke = false;
+                Debug.LogWarning("[GrassField] The CSV parsed to an empty path — stroke colors not assigned.");
+                return;
             }
 
-            var pts = path.Points;
-            for (int k = 1; k < pts.Count; k++)
-            {
-                if (pts[k].penDown)
-                {
-                    if (!inStroke)
-                    {
-                        sb = new Bounds(pts[k - 1].position, Vector3.zero);
-                        inStroke = true;
-                    }
-                    sb.Encapsulate(pts[k].position);
-                }
-                else
-                {
-                    CloseStroke();
-                }
-            }
-            CloseStroke();
+            Undo.RecordObject(vis, "Auto-Assign Stroke Colors");
+            // Star strokes get the Other color at alpha 0 — the visual reads alpha 0 as "throw nothing",
+            // so the baked list behaves exactly like Logo Auto does with Flowers On Stars off.
+            Color star = vis.flowersOnStars
+                ? vis.otherColor
+                : new Color(vis.otherColor.r, vis.otherColor.g, vis.otherColor.b, 0f);
+            vis.strokeColors = LogoStrokeClassifier.BuildStrokeColors(
+                path, vis.circleColor, vis.swooshColor, vis.otherColor, star, out string report);
+            vis.paletteMode = MowingVisual_GrassAndFlowers.PaletteMode.StrokeList;
 
-            vis.strokeColors = colors;
-            Debug.Log($"[GrassField] {colors.Count} strokes classified: {blue} blue (disc), {red} red " +
-                      $"(swoosh), {white} white (letters/orbit). Hand-edit Stroke Colors if any look wrong.", vis);
+            Debug.Log($"[GrassField] {report}\n  Palette Mode is now Stroke List: the list above is what " +
+                      "the flowers use, and each entry is yours to edit — an entry with ALPHA 0 throws no " +
+                      "flowers at all, which is how the star dots are silenced. Set Palette Mode back to " +
+                      "Logo Auto to go back to classifying every run (which also survives a new CSV).", vis);
         }
 
         static bool TryRendererBounds(GameObject go, out Bounds bounds)

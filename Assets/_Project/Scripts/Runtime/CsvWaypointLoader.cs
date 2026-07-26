@@ -90,8 +90,8 @@ namespace NasaSim
             if (Application.isPlaying)
                 Debug.Log($"[CsvWaypointLoader] Loaded '{(csvFile != null ? csvFile.name : "<none>")}': " +
                           $"{_current.Count} points, {_current.StrokeBreakCount} pen-up lifts. " +
-                          "(Lifts should be ~41 for the clean logo; hundreds means it's fragmenting — " +
-                          "point the Csv File at nasa_logo_clean.csv.)", this);
+                          "(Lifts should be 56 for the clean logo — one per stroke; hundreds means it's " +
+                          "fragmenting — point the Csv File at nasa_logo_clean.csv.)", this);
             return _current;
         }
 

@@ -282,10 +282,17 @@ namespace NasaSim.EditorTools
         }
 
         /// <summary>
-        /// Wire the two FRONT Axle_* pivots (largest tractor-local +Z) as steer wheels, so the realistic
-        /// steering model visually yaws them through corners. Works because <c>SpinWheels</c> rebuilds
-        /// each wheel mesh's pose from its axle's CURRENT rotation every frame — yawing the axle steers
-        /// the wheel with no extra wiring.
+        /// Wire the two FRONT wheel pivots as steer wheels, so the steering model visually yaws them
+        /// through corners. Works because <c>SpinWheels</c> rebuilds each wheel mesh's pose from its
+        /// axle's CURRENT rotation every frame — yawing the axle steers the wheel with no extra wiring.
+        ///
+        /// Front/rear is decided by each wheel's MEASURED HUB (renderer bounds), never by the axle
+        /// transform's position: an FBX exported with frozen transforms parks every pivot on the model
+        /// origin, so sorting on <c>axle.position</c> compares four identical numbers and hands back an
+        /// arbitrary pair — which is how a rear wheel ends up doing the steering.
+        ///
+        /// The follower now does this itself at the start of every run (Steer Wheel Selection = Auto
+        /// Front); this menu just fills the list in at edit time so you can see and check the choice.
         /// </summary>
         [MenuItem("Tools/NASA Sim/Tractor/Wire Steer Wheels From Axles")]
         public static void WireSteerWheelsFromAxles()
@@ -297,33 +304,92 @@ namespace NasaSim.EditorTools
                 return;
             }
 
-            var candidates = new List<(Transform axle, float z)>();
+            bool rear = follower.steerWheelSelection == TractorPathFollower.SteerWheelSelection.AutoRear;
+
+            var candidates = new List<(Transform axle, float z, bool namedFront, bool namedRear)>();
             if (follower.wheels != null)
                 foreach (var w in follower.wheels)
-                    if (w?.axle != null)
-                        candidates.Add((w.axle, follower.transform.InverseTransformPoint(w.axle.position).z));
+                {
+                    if (w?.axle == null) continue;
+                    if (candidates.Exists(c => c.axle == w.axle)) continue;   // two meshes, one axle
+                    if (!follower.TryGetWheelAxis(w, out Vector3 hub, out _, out _, out _)) continue;
+                    candidates.Add((w.axle,
+                                    follower.transform.InverseTransformPoint(hub).z,
+                                    HasNameToken(w.axle, follower.transform, "front", "fwd"),
+                                    HasNameToken(w.axle, follower.transform, "back", "rear")));
+                }
 
             if (candidates.Count < 2)
             {
-                Debug.LogWarning("[ModelImportTools] Fewer than two wheels with Axle_* pivots are wired — " +
+                Debug.LogWarning("[ModelImportTools] Fewer than two wheels with axle pivots are wired — " +
                                  "run Tractor > Swap In Selected FBX or Populate Wheels From Selection first.",
                                  follower);
                 return;
             }
 
-            candidates.Sort((a, b) => b.z.CompareTo(a.z));      // largest local +Z = the nose
+            // Furthest along the tractor's own +Z is the nose; Auto Rear wants the other end.
+            candidates.Sort((a, b) => rear ? a.z.CompareTo(b.z) : b.z.CompareTo(a.z));
             Undo.RecordObject(follower, "Wire Steer Wheels");
             follower.steerWheels = new[] { candidates[0].axle, candidates[1].axle };
             EditorUtility.SetDirty(follower);
             EditorSceneManager.MarkSceneDirty(follower.gameObject.scene);
 
-            string ambiguity = "";
-            if (candidates.Count > 2 && Mathf.Abs(candidates[1].z - candidates[2].z) < 0.05f)
-                ambiguity = "\n  WARNING: front/rear is ambiguous (axles share nearly the same Z). If the " +
-                            "model faces sideways, run Tractor > Rotate Model 90 first, then re-run this.";
+            var log = new StringBuilder();
+            log.AppendLine($"[ModelImportTools] Steer wheels = the two furthest {(rear ? "BACK" : "FORWARD")} " +
+                           "by measured hub:");
+            for (int i = 0; i < candidates.Count; i++)
+                log.AppendLine($"  {(i < 2 ? "STEER " : "      ")}{ScenePathTo(candidates[i].axle, follower.transform)}" +
+                               $"   hub at local z = {candidates[i].z:0.###} m");
 
-            Debug.Log($"[ModelImportTools] Steer wheels wired: {candidates[0].axle.name}, " +
-                      $"{candidates[1].axle.name} (front pair by local +Z).{ambiguity}", follower);
+            // The model's own naming is a free second opinion. Any disagreement — a wheel named for the
+            // wrong end being picked, or one named for the right end being passed over — means the model
+            // is not facing the way it drives.
+            string wanted = rear ? "rear" : "front", other = rear ? "front" : "rear";
+            bool pickedWrongEnd = false, passedOverRightEnd = false;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                bool namedWanted = rear ? candidates[i].namedRear : candidates[i].namedFront;
+                bool namedOther = rear ? candidates[i].namedFront : candidates[i].namedRear;
+                if (i < 2 && namedOther) pickedWrongEnd = true;
+                if (i >= 2 && namedWanted) passedOverRightEnd = true;
+            }
+            if (pickedWrongEnd || passedOverRightEnd)
+                log.AppendLine($"  WARNING: the geometry and the model's own names disagree — a wheel " +
+                               $"named '{other}' was chosen, or one named '{wanted}' was passed over. The " +
+                               "model is probably not facing the way it drives: run Tractor > Rotate " +
+                               "Model 90 until its nose leads, then re-run this.");
+            if (candidates.Count > 2 && Mathf.Abs(candidates[1].z - candidates[2].z) < 0.05f)
+                log.AppendLine("  WARNING: the two ends sit at almost the same z, so front and rear are " +
+                               "not distinguishable — the model may be rotated sideways. Run Tractor > " +
+                               "Rotate Model 90, then re-run this.");
+            if (follower.steerWheelSelection != TractorPathFollower.SteerWheelSelection.Manual)
+                log.AppendLine($"  NOTE: Steer Wheel Selection is {follower.steerWheelSelection}, so the " +
+                               "follower re-derives this same pair at the start of every run. This menu " +
+                               "only fills the list in so you can see it.");
+
+            Debug.Log(log.ToString(), follower);
+        }
+
+        /// <summary>True if this transform or any ancestor below <paramref name="stopAt"/> is named for one
+        /// of the given tokens.</summary>
+        static bool HasNameToken(Transform t, Transform stopAt, params string[] tokens)
+        {
+            while (t != null && t != stopAt)
+            {
+                string n = t.name.ToLowerInvariant();
+                foreach (var token in tokens)
+                    if (n.Contains(token)) return true;
+                t = t.parent;
+            }
+            return false;
+        }
+
+        static string ScenePathTo(Transform t, Transform stopAt)
+        {
+            var sb = new StringBuilder(t.name);
+            for (Transform p = t.parent; p != null && p != stopAt; p = p.parent)
+                sb.Insert(0, p.name + "/");
+            return sb.ToString();
         }
 
         [MenuItem("Tools/NASA Sim/Tractor/Rotate Model 90 (fix facing)")]
