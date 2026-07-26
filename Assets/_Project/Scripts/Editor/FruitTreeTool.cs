@@ -20,18 +20,21 @@ namespace NasaSim.EditorTools
         public static void AddTrees(int count)
         {
             Vector3 center = Vector3.zero;
-            float radius = 24f;
+            // Ring the moat's outline, whatever shape it is — OuterHalf is the water's half-extents, so
+            // this follows a square moat as well as the round one the first pass built.
+            Vector2 reach = Vector2.one * 24f;
             var moatGo = GameObject.Find("WATER_Moat");
             var moat = moatGo != null ? moatGo.GetComponent<WaterBody>() : null;
             if (moat != null)
             {
                 center = moat.transform.position;
-                radius = moat.outerRadius + 1.8f;      // just beyond the outer bank
+                reach = moat.OuterHalf + Vector2.one * 1.8f;   // just beyond the outer bank
             }
             else
             {
                 Debug.LogWarning("[FruitTrees] No WATER_Moat found — placing trees on a default 24 m ring. " +
-                                 "Run Tools > NASA Sim > Water > Create Water Body first for bank-side trees.");
+                                 "Run Tools > NASA Sim > Water > Add Square Moat Around Grass first for " +
+                                 "bank-side trees.");
             }
 
             Material trunkMat = SceneBootstrap.MakeMat("Assets/_Project/Materials/TreeTrunk.mat",
@@ -55,7 +58,7 @@ namespace NasaSim.EditorTools
                 if (group.transform.Find(name) != null) continue;   // idempotent
 
                 float angle = (i / (float)count) * Mathf.PI * 2f + 0.4f;
-                Vector3 pos = center + new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle)) * radius;
+                Vector3 pos = center + new Vector3(Mathf.Cos(angle) * reach.x, 0f, Mathf.Sin(angle) * reach.y);
                 float y = 0f;
                 if (Physics.Raycast(pos + Vector3.up * 10f, Vector3.down, out RaycastHit hit, 40f,
                                     ~0, QueryTriggerInteraction.Ignore))

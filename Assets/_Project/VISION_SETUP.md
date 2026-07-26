@@ -29,8 +29,8 @@ without jumping → **C** for the free-fly camera to admire the finished flower 
 | 7 | `Setup ▸ Add Interaction System & UI` | The "[E] …" prompt UI + proximity sensor + the astronaut's hand (eat/pet flourishes); camera defaults to first person |
 | 8 | `Biodome ▸ Build Airlock In Tunnel` | Doors, buttons, chamber sensor, gas vents, full pressurize cycle |
 | 9 | `Tractor ▸ Wire Steer Wheels From Axles` | *(optional — the follower now does this itself)* Fills Steer Wheels in at edit time so you can see the choice, and logs every wheel's measured hub position |
-| 10 | `Water ▸ Create Water Body` (Moat preset) | The moat ring (r 27–31 m) around the logo: animated water + mud basin with collider |
-| 11 | `Water ▸ Spawn Ducks & Fish` | 3 pattable ducks + 8 fish in the moat (re-run per pond, counts adjustable) |
+| 10 | `Water ▸ Add Square Moat Around Grass` | The square moat: a band of animated water running around the grass patch (auto-sized to it), mud trench + collider, stocked with 3 ducks and 8 fish. Resize it any time on the WaterBody component or by dragging its edges in the Scene view |
+| 11 | `Water ▸ Add Round Pond Here` | A round pond at the Scene-view pivot, with its own ducks and fish. Run it as many times as you want ponds |
 | 12 | `Grass ▸ Add Grass Mowing Visual` | Puts the grass/flower visual on the mower — the cut *is* the mark, nothing is painted on the floor |
 | 13 | `Interactables ▸ Add Fruit Trees At Moat` | 4 placeholder trees on the outer bank; fruit grow at FRUIT_ markers in Play mode |
 | 13b | `Grass ▸ Build Mowable Grass` | **The grass itself** — ~70,000 standing blades over the field, cut down by the tractor. Run it **last**: it probes the ground for what it may not grow through (see §3b) |
@@ -100,9 +100,27 @@ the deck just passed, so a second lap over ground already cut throws nothing.
 
 **Water never comes from Maya.** The realism lives in the shader (depth tint, refraction, animated
 waves, shore foam) and none of that survives FBX — Maya's water materials arrive as grey lumps, and a
-ripple surface needs a dense even grid that's generated, not modelled. Maya supplies only basin/trench
-geometry (`COL_`) and `WATER_` locators; `Water ▸ Create Water Body` does the rest. Extra ponds:
-Pond preset (or a `WATER_` locator) → `Spawn Ducks & Fish` on it. Done.
+ripple surface needs a dense even grid that's generated, not modelled. Maya supplies the *container*;
+Unity supplies the water in it.
+
+So the water is built from numbers, live: **every field on `WaterBody` rebuilds the sheet, the trench
+and its collider the moment you change it**, in the editor, without pressing Play. Nothing is saved to
+disk, so there is no mesh asset to keep in sync and no tool to re-run.
+
+- **The square moat** — `Water ▸ Add Square Moat Around Grass`, or the `Create Water Body` window for
+  the gap/width/corner-radius up front. Afterwards: `Inner Size` (the dry square it runs around),
+  `Water Width`, `Corner Radius` on the component — or drag the cone handles on its banks in the Scene
+  view. **Fit around grass** re-centres and re-sizes it to the grass patch with the gap you give it.
+- **Round ponds outside it** — `Water ▸ Add Round Pond Here` drops one at the Scene-view pivot; run it
+  again for the next one. Same for a `WATER_` locator exported from Maya (`Create Water Body` →
+  *At Selected WATER_ Marker*).
+- **Ducks and fish** live on the water body — set the counts in its Inspector and hit *Apply
+  population*, or use `Water ▸ Spawn Ducks & Fish`. Ducks ride the actual wave drawn under them and
+  lean with its slope; fish cruise the depth band with a tail waggle and the odd dart.
+- **When the container model lands:** park the water body inside it, turn **Build Basin off** (the
+  generated trench was only ever a stand-in for it), and pull the edges out until the sheet meets its
+  walls. `Water ▸ Snap All Wildlife Into Water` puts everyone back in afterwards — resizing a pond can
+  leave a duck standing on the lawn, though each one also checks itself on Start.
 
 ## 5. Flowers: where they land and what color they are
 

@@ -58,18 +58,20 @@ namespace NasaSim.EditorTools
             if (body == null)
             {
                 Debug.LogWarning("[Wildlife] No WaterBody in the scene — run " +
-                                 "Tools > NASA Sim > Water > Create Water Body first.");
+                                 "Tools > NASA Sim > Water > Add Square Moat Around Grass first.");
                 return;
             }
             Spawn(body, 3, 8);
         }
 
-        public static void Spawn(WaterBody water, int ducks, int fish)
+        public static void Spawn(WaterBody water, int ducks, int fish, bool quiet = false)
         {
             AdjustPopulation(water, "Duck", ducks, isDuck: true);
             AdjustPopulation(water, "Fish", fish, isDuck: false);
+            water.SnapWildlifeInside();          // resized pond? everyone goes back in the water
             EditorSceneManager.MarkSceneDirty(water.gameObject.scene);
-            Debug.Log($"[Wildlife] '{water.name}' population: {ducks} duck(s), {fish} fish.", water);
+            if (!quiet)
+                Debug.Log($"[Wildlife] '{water.name}' population: {ducks} duck(s), {fish} fish.", water);
         }
 
         static void AdjustPopulation(WaterBody water, string prefix, int wanted, bool isDuck)

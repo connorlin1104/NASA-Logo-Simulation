@@ -19,6 +19,25 @@ namespace NasaSim
     {
         static readonly int WaterTimeId = Shader.PropertyToID("_WaterTime");
 
+        /// <summary>
+        /// The clock the water is animated on — unscaled, and ticking in the editor as well. Anything
+        /// that has to agree with the drawn surface reads it from here (<see cref="WaterBody"/> uses it to
+        /// work out the wave a duck is sitting on).
+        /// </summary>
+        public static float Clock
+        {
+            get
+            {
+#if UNITY_EDITOR
+                return Application.isPlaying
+                    ? Time.unscaledTime
+                    : (float)UnityEditor.EditorApplication.timeSinceStartup;
+#else
+                return Time.unscaledTime;
+#endif
+            }
+        }
+
         Renderer _renderer;
         MaterialPropertyBlock _mpb;
 
@@ -32,16 +51,8 @@ namespace NasaSim
         {
             if (_renderer == null || _mpb == null) return;
 
-            float t;
-#if UNITY_EDITOR
-            t = Application.isPlaying
-                ? Time.unscaledTime
-                : (float)UnityEditor.EditorApplication.timeSinceStartup;
-#else
-            t = Time.unscaledTime;
-#endif
             _renderer.GetPropertyBlock(_mpb);
-            _mpb.SetFloat(WaterTimeId, t);
+            _mpb.SetFloat(WaterTimeId, Clock);
             _renderer.SetPropertyBlock(_mpb);
         }
     }

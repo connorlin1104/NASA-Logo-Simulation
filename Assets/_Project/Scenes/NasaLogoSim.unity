@@ -414,7 +414,7 @@ Transform:
   m_GameObject: {fileID: 2534591}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: 0, y: 0, z: 13.4}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -4911,7 +4911,7 @@ Transform:
   m_GameObject: {fileID: 75499205}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: 0.5465534, z: -0, w: -0.8374243}
-  m_LocalPosition: {x: -21.2091, y: -0.39999998, z: 18.794876}
+  m_LocalPosition: {x: -23.82162, y: -0.33791855, z: 5.121935}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -4936,10 +4936,17 @@ MonoBehaviour:
   turnRateDeg: 160
   idlePauseRange: {x: 0.3, y: 1.2}
   arriveDistance: 0.4
+  bankMargin: 0.6
+  swayDeg: 7
+  swayFrequency: 0.35
+  floatDepth: 0.02
   bobAmplitude: 0.04
   bobFrequency: 1.3
-  tiltDeg: 6
+  waveTilt: 1
+  tiltResponse: 3.5
   depthBand: {x: 0.25, y: 0.6}
+  waggleDeg: 14
+  waggleFrequency: 2.2
   dartChancePerSec: 0.15
   dartSpeedMul: 2.5
   dartSeconds: 1.2
@@ -7763,7 +7770,7 @@ Transform:
   m_GameObject: {fileID: 122902269}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: 0.64734405, z: -0, w: 0.7621979}
-  m_LocalPosition: {x: -27.85262, y: -0.39999998, z: 10.7867985}
+  m_LocalPosition: {x: -22.903622, y: -0.4372121, z: -3.982071}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -7788,10 +7795,17 @@ MonoBehaviour:
   turnRateDeg: 160
   idlePauseRange: {x: 0.3, y: 1.2}
   arriveDistance: 0.4
+  bankMargin: 0.6
+  swayDeg: 7
+  swayFrequency: 0.35
+  floatDepth: 0.02
   bobAmplitude: 0.04
   bobFrequency: 1.3
-  tiltDeg: 6
+  waveTilt: 1
+  tiltResponse: 3.5
   depthBand: {x: 0.25, y: 0.6}
+  waggleDeg: 14
+  waggleFrequency: 2.2
   dartChancePerSec: 0.15
   dartSpeedMul: 2.5
   dartSeconds: 1.2
@@ -10194,7 +10208,7 @@ Transform:
   m_GameObject: {fileID: 150484914}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: 0.9069895, z: -0, w: 0.42115322}
-  m_LocalPosition: {x: -26.38429, y: -0.39999998, z: -14.107035}
+  m_LocalPosition: {x: -23.5514, y: -0.49766636, z: -23.202255}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -10219,10 +10233,17 @@ MonoBehaviour:
   turnRateDeg: 160
   idlePauseRange: {x: 0.3, y: 1.2}
   arriveDistance: 0.4
+  bankMargin: 0.6
+  swayDeg: 7
+  swayFrequency: 0.35
+  floatDepth: 0.02
   bobAmplitude: 0.04
   bobFrequency: 1.3
-  tiltDeg: 6
+  waveTilt: 1
+  tiltResponse: 3.5
   depthBand: {x: 0.25, y: 0.6}
+  waggleDeg: 14
+  waggleFrequency: 2.2
   dartChancePerSec: 0.15
   dartSpeedMul: 2.5
   dartSeconds: 1.2
@@ -16700,7 +16721,7 @@ Transform:
   m_GameObject: {fileID: 250083204}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: 0.63744235, z: -0, w: -0.7704981}
-  m_LocalPosition: {x: -29.346617, y: 0, z: -1.0622063}
+  m_LocalPosition: {x: 21.727592, y: 0, z: 23.62984}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -16853,10 +16874,17 @@ MonoBehaviour:
   turnRateDeg: 90
   idlePauseRange: {x: 1, y: 4}
   arriveDistance: 0.4
+  bankMargin: 0.6
+  swayDeg: 7
+  swayFrequency: 0.35
+  floatDepth: 0.02
   bobAmplitude: 0.04
   bobFrequency: 1.3
-  tiltDeg: 6
+  waveTilt: 1
+  tiltResponse: 3.5
   depthBand: {x: 0.25, y: 0.6}
+  waggleDeg: 14
+  waggleFrequency: 2.2
   dartChancePerSec: 0.15
   dartSpeedMul: 2.5
   dartSeconds: 1.2
@@ -20748,7 +20776,7 @@ Transform:
   m_GameObject: {fileID: 314311219}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: 0, y: 0, z: 13.4}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -21386,11 +21414,19 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2118d09d17a704ee8b3a412b627c6bdd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::NasaSim.WaterBody
-  shape: 1
+  shape: 2
+  innerSize: {x: 42.366882, y: 42.366882}
+  bandWidth: 3.5
+  cornerRadius: 0
+  radius: 6
   innerRadius: 27
   outerRadius: 31
   boxSize: {x: 8, y: 0, z: 8}
   depth: 0.8
+  buildBasin: 1
+  bankWidth: 0.6
+  basinMaterial: {fileID: 2100000, guid: fc8c713d6210c4af88a236a673bbf782, type: 2}
+  meshDensity: 2
 --- !u!114 &320378156
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -21459,7 +21495,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 320378154}
-  m_Mesh: {fileID: 4300000, guid: 5aa5385f2a9c24421983ae21aa6f154e, type: 2}
+  m_Mesh: {fileID: 0}
 --- !u!4 &320378159
 Transform:
   m_ObjectHideFlags: 0
@@ -21469,8 +21505,8 @@ Transform:
   m_GameObject: {fileID: 320378154}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0.23914146, y: -0.12, z: 0.59915733}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalPosition: {x: 0, y: 0.91996, z: 0}
+  m_LocalScale: {x: 0.99805677, y: 0.99805677, z: 0.99805677}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1358478971}
@@ -31200,7 +31236,7 @@ Transform:
   m_GameObject: {fileID: 452906342}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: 0.8446342, z: -0, w: 0.53534395}
-  m_LocalPosition: {x: -28.280254, y: -0.39999998, z: -1.2771378}
+  m_LocalPosition: {x: -23.173317, y: -0.5540686, z: -17.223473}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -31225,10 +31261,17 @@ MonoBehaviour:
   turnRateDeg: 160
   idlePauseRange: {x: 0.3, y: 1.2}
   arriveDistance: 0.4
+  bankMargin: 0.6
+  swayDeg: 7
+  swayFrequency: 0.35
+  floatDepth: 0.02
   bobAmplitude: 0.04
   bobFrequency: 1.3
-  tiltDeg: 6
+  waveTilt: 1
+  tiltResponse: 3.5
   depthBand: {x: 0.25, y: 0.6}
+  waggleDeg: 14
+  waggleFrequency: 2.2
   dartChancePerSec: 0.15
   dartSpeedMul: 2.5
   dartSeconds: 1.2
@@ -33662,7 +33705,7 @@ Transform:
   m_GameObject: {fileID: 482732350}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: 0.23276012, z: -0, w: 0.9725342}
-  m_LocalPosition: {x: -29.212593, y: -0.39999998, z: -1.5844982}
+  m_LocalPosition: {x: 5.830082, y: -0.31346074, z: -22.12978}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -33687,10 +33730,17 @@ MonoBehaviour:
   turnRateDeg: 160
   idlePauseRange: {x: 0.3, y: 1.2}
   arriveDistance: 0.4
+  bankMargin: 0.6
+  swayDeg: 7
+  swayFrequency: 0.35
+  floatDepth: 0.02
   bobAmplitude: 0.04
   bobFrequency: 1.3
-  tiltDeg: 6
+  waveTilt: 1
+  tiltResponse: 3.5
   depthBand: {x: 0.25, y: 0.6}
+  waggleDeg: 14
+  waggleFrequency: 2.2
   dartChancePerSec: 0.15
   dartSpeedMul: 2.5
   dartSeconds: 1.2
@@ -37138,7 +37188,7 @@ Transform:
   m_GameObject: {fileID: 526267755}
   serializedVersion: 2
   m_LocalRotation: {x: -0.35826376, y: -0, z: -0, w: 0.9336204}
-  m_LocalPosition: {x: 0, y: 2.2516766, z: 21.667242}
+  m_LocalPosition: {x: 0, y: 2.2516766, z: 35.06724}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -42476,7 +42526,7 @@ Transform:
   m_GameObject: {fileID: 576104861}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: 0.6065199, z: -0, w: 0.7950684}
-  m_LocalPosition: {x: 28.254747, y: -0.39999998, z: -1.1322849}
+  m_LocalPosition: {x: 23.046925, y: -0.39900017, z: 10.860874}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -42501,10 +42551,17 @@ MonoBehaviour:
   turnRateDeg: 160
   idlePauseRange: {x: 0.3, y: 1.2}
   arriveDistance: 0.4
+  bankMargin: 0.6
+  swayDeg: 7
+  swayFrequency: 0.35
+  floatDepth: 0.02
   bobAmplitude: 0.04
   bobFrequency: 1.3
-  tiltDeg: 6
+  waveTilt: 1
+  tiltResponse: 3.5
   depthBand: {x: 0.25, y: 0.6}
+  waggleDeg: 14
+  waggleFrequency: 2.2
   dartChancePerSec: 0.15
   dartSpeedMul: 2.5
   dartSeconds: 1.2
@@ -59489,7 +59546,7 @@ Transform:
   m_GameObject: {fileID: 807426621}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: 0.5228663, z: -0, w: 0.8524147}
-  m_LocalPosition: {x: 1.530132, y: 0, z: 28.03858}
+  m_LocalPosition: {x: 23.476105, y: 0, z: 16.64611}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -59642,10 +59699,17 @@ MonoBehaviour:
   turnRateDeg: 90
   idlePauseRange: {x: 1, y: 4}
   arriveDistance: 0.4
+  bankMargin: 0.6
+  swayDeg: 7
+  swayFrequency: 0.35
+  floatDepth: 0.02
   bobAmplitude: 0.04
   bobFrequency: 1.3
-  tiltDeg: 6
+  waveTilt: 1
+  tiltResponse: 3.5
   depthBand: {x: 0.25, y: 0.6}
+  waggleDeg: 14
+  waggleFrequency: 2.2
   dartChancePerSec: 0.15
   dartSpeedMul: 2.5
   dartSeconds: 1.2
@@ -68013,7 +68077,7 @@ Transform:
   m_GameObject: {fileID: 904182915}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: 0.05793369, z: -0, w: -0.99832046}
-  m_LocalPosition: {x: 24.603704, y: 0, z: 13.6915655}
+  m_LocalPosition: {x: 22.13633, y: 0, z: 13.001892}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -68166,10 +68230,17 @@ MonoBehaviour:
   turnRateDeg: 90
   idlePauseRange: {x: 1, y: 4}
   arriveDistance: 0.4
+  bankMargin: 0.6
+  swayDeg: 7
+  swayFrequency: 0.35
+  floatDepth: 0.02
   bobAmplitude: 0.04
   bobFrequency: 1.3
-  tiltDeg: 6
+  waveTilt: 1
+  tiltResponse: 3.5
   depthBand: {x: 0.25, y: 0.6}
+  waggleDeg: 14
+  waggleFrequency: 2.2
   dartChancePerSec: 0.15
   dartSpeedMul: 2.5
   dartSeconds: 1.2
@@ -111014,7 +111085,7 @@ Transform:
   m_GameObject: {fileID: 1358478970}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0.12, z: 0}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -111041,7 +111112,7 @@ MeshCollider:
   serializedVersion: 5
   m_Convex: 0
   m_CookingOptions: 30
-  m_Mesh: {fileID: 4300000, guid: e9c3e9687087143b7a0abc7a86ab5fca, type: 2}
+  m_Mesh: {fileID: 0}
 --- !u!23 &1358478973
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -111050,7 +111121,7 @@ MeshRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1358478970}
   m_Enabled: 1
-  m_CastShadows: 1
+  m_CastShadows: 0
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
   m_StaticShadowCaster: 0
@@ -111098,7 +111169,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1358478970}
-  m_Mesh: {fileID: 4300000, guid: e9c3e9687087143b7a0abc7a86ab5fca, type: 2}
+  m_Mesh: {fileID: 0}
 --- !u!1001 &1359603511
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -116950,7 +117021,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 4ad9915a47d66402bb1ede487500ff37, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 23.91
+      value: 36.9
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 4ad9915a47d66402bb1ede487500ff37, type: 3}
       propertyPath: m_LocalRotation.w
@@ -121779,7 +121850,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 4ad9915a47d66402bb1ede487500ff37, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 23.91
+      value: 36.9
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 4ad9915a47d66402bb1ede487500ff37, type: 3}
       propertyPath: m_LocalRotation.w
@@ -148547,7 +148618,7 @@ Transform:
   m_GameObject: {fileID: 1777128639}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: 0.31766176, z: -0, w: 0.9482041}
-  m_LocalPosition: {x: 6.694833, y: -0.39999998, z: 29.083899}
+  m_LocalPosition: {x: 21.806763, y: -0.34415936, z: 18.700466}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -148572,10 +148643,17 @@ MonoBehaviour:
   turnRateDeg: 160
   idlePauseRange: {x: 0.3, y: 1.2}
   arriveDistance: 0.4
+  bankMargin: 0.6
+  swayDeg: 7
+  swayFrequency: 0.35
+  floatDepth: 0.02
   bobAmplitude: 0.04
   bobFrequency: 1.3
-  tiltDeg: 6
+  waveTilt: 1
+  tiltResponse: 3.5
   depthBand: {x: 0.25, y: 0.6}
+  waggleDeg: 14
+  waggleFrequency: 2.2
   dartChancePerSec: 0.15
   dartSpeedMul: 2.5
   dartSeconds: 1.2
@@ -158175,27 +158253,27 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 870ab15f52cbe4cae944a1ebdde426a1, type: 3}
       propertyPath: m_LocalScale.x
-      value: 2.3786957
+      value: 3.114664
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 870ab15f52cbe4cae944a1ebdde426a1, type: 3}
       propertyPath: m_LocalScale.y
-      value: 2.3786957
+      value: 3.114664
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 870ab15f52cbe4cae944a1ebdde426a1, type: 3}
       propertyPath: m_LocalScale.z
-      value: 2.3786957
+      value: 3.114664
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 870ab15f52cbe4cae944a1ebdde426a1, type: 3}
       propertyPath: m_LocalPosition.x
-      value: 10.627
+      value: 13.897
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 870ab15f52cbe4cae944a1ebdde426a1, type: 3}
       propertyPath: m_LocalPosition.y
-      value: 0.21
+      value: -6.2
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 870ab15f52cbe4cae944a1ebdde426a1, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 22.7
+      value: 33.131
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 870ab15f52cbe4cae944a1ebdde426a1, type: 3}
       propertyPath: m_LocalRotation.w
@@ -177637,7 +177715,7 @@ Transform:
   m_GameObject: {fileID: 2088861308}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: 0.52373636, z: -0, w: -0.85188043}
-  m_LocalPosition: {x: -17.417032, y: -0.39999998, z: -23.781837}
+  m_LocalPosition: {x: 22.41026, y: -0.3772308, z: -16.98917}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -177662,10 +177740,17 @@ MonoBehaviour:
   turnRateDeg: 160
   idlePauseRange: {x: 0.3, y: 1.2}
   arriveDistance: 0.4
+  bankMargin: 0.6
+  swayDeg: 7
+  swayFrequency: 0.35
+  floatDepth: 0.02
   bobAmplitude: 0.04
   bobFrequency: 1.3
-  tiltDeg: 6
+  waveTilt: 1
+  tiltResponse: 3.5
   depthBand: {x: 0.25, y: 0.6}
+  waggleDeg: 14
+  waggleFrequency: 2.2
   dartChancePerSec: 0.15
   dartSpeedMul: 2.5
   dartSeconds: 1.2
