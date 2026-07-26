@@ -61,8 +61,10 @@ namespace NasaSim
         [Min(0.01f)] public float flattenSeconds = 0.25f;
 
         [Header("Flowers — where they land")]
-        [Tooltip("Metres of pen-down travel between flower bursts.")]
-        [Min(0.1f)] public float flowerSpacing = 0.6f;
+        [Tooltip("Metres of pen-down travel between flower bursts — the density dial. The shipped logo " +
+                 "is ~573 m of line, so 0.4 m is ~1,430 bursts and ~1,930 flowers on the ground at the " +
+                 "end of a run. Raise it for a sparser, dottier logo; lower it for a denser one.")]
+        [Min(0.1f)] public float flowerSpacing = 0.4f;
         public Vector2Int flowersPerBurst = new Vector2Int(1, 2);
         [Tooltip("How far BEHIND the deck a flower lands, measured back along the line just cut (m). " +
                  "Small values keep the band tight to the tractor; the path is followed exactly either way.")]
@@ -82,8 +84,9 @@ namespace NasaSim
         [Tooltip("Hard cap on live flowers; when it is reached the oldest LANDED flower is recycled.\n\n" +
                  "0 (the default) sizes the pool from the logo itself — mown length ÷ Flower Spacing × the " +
                  "TOP of Flowers Per Burst — so a full mow never recycles anything and the finished field " +
-                 "is the whole logo. The shipped logo is ~573 m of line: 955 bursts, a ceiling of ~1900, " +
-                 "against ~1280 flowers actually thrown. Set a number here only to force a lower ceiling.")]
+                 "is the whole logo. The shipped logo is ~573 m of line: 1,430 bursts, a ceiling of " +
+                 "~2,880, against ~1,930 flowers actually thrown (the 42 star dots are silenced, so their " +
+                 "~59 m throws nothing). Set a number here only to force a lower ceiling.")]
         [Min(0)] public int flowerPoolLimit = 0;
         [Tooltip("For the ejection direction before any line history exists. Auto-found from the follower.")]
         public Transform tractor;
@@ -116,10 +119,10 @@ namespace NasaSim
 
         [Header("Flower shape")]
         [Tooltip("Overall height of a flower, stem included (m) — the one dial the whole flower scales " +
-                 "off, head included. 0.7 m puts a ~0.39 m head on a 0.9 m astronaut's chest, which is " +
-                 "about as big as this logo takes: at the shipped 0.6 m Flower Spacing and 1-2 per burst " +
-                 "the heads just meet, so the band reads as continuous colour rather than as dots. Much " +
-                 "past this and they overlap into mush.")]
+                 "off, head included. 0.7 m puts a ~0.39 m head on a 0.9 m astronaut's chest. At the " +
+                 "shipped Flower Spacing that is wider than the gap between flowers, so the heads " +
+                 "overlap on purpose and the band reads as solid colour; the size variation and lean " +
+                 "are what keep that reading as a flowerbed rather than as one flat sheet.")]
         [Min(0.05f)] public float flowerHeight = 0.7f;
         [Tooltip("Random size spread around that height. 0.22 = anywhere from 78% to 122%.")]
         [Range(0f, 0.6f)] public float flowerSizeVariation = 0.22f;
@@ -899,7 +902,7 @@ namespace NasaSim
         /// reading as a flat sticker from above.
         ///
         /// The flower material is UNLIT (it has to multiply vertex colors, which is how one mesh per color
-        /// serves every flower of that color and keeps ~1,300 of them batchable). So all the shading is
+        /// serves every flower of that color and keeps ~1,900 of them batchable). So all the shading is
         /// baked into the vertex colors here: petals darken toward their base, the stem darkens toward the
         /// ground, leaves darken where they meet it. That is what gives the head depth with no lighting.
         ///

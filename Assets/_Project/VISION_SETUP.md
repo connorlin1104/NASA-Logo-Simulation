@@ -118,7 +118,8 @@ exactly there. Three knobs shape it:
 | `Land Back Distance` | how far behind the deck a flower lands, measured **along** the cut line (default 0.5–1.5 m) |
 | `Land Side Spread` | sideways scatter as a multiple of half the swath. `0` = a dead-straight single file, `1` = out to the swath edge, default `0.9` so flowers stay inside the cut |
 | `Arc Seconds` | flight time, i.e. how high and lazy the toss looks. Changing it does **not** move the landing spot |
-| `Flower Pool Limit` | `0` (default) sizes the pool from the logo — 573 m of line ÷ 0.6 m spacing = 955 bursts × 2 (the top of `Flowers Per Burst`) ≈ a **1 900** ceiling, against the ~1 280 actually thrown — so a finished mow never recycles a flower away. Set a number only to force a lower ceiling |
+| `Flower Spacing` | metres of cut line between bursts — **the density dial.** `0.4` puts ~1 930 flowers on the finished logo; `0.6` was the old, dottier ~1 280 |
+| `Flower Pool Limit` | `0` (default) sizes the pool from the logo — 573 m of line ÷ 0.4 m spacing = 1 430 bursts × 2 (the top of `Flowers Per Burst`) ≈ a **2 880** ceiling, against the ~1 930 actually thrown (the 42 star dots throw nothing) — so a finished mow never recycles a flower away. Set a number only to force a lower ceiling |
 
 Measured over a full simulated run: half the flowers land within 0.14 m of the mown line and none
 further than half the swath.
@@ -128,7 +129,7 @@ centre disc, and `Petal Count` petals that widen, tilt up and droop at the tip. 
 the whole thing (default 0.44 m — the astronaut is ~0.9 m tall), `Flower Size Variation` spreads it
 per flower, `Flower Lean Degrees` stops a bed of them standing to attention. The material is *unlit*,
 because it has to multiply vertex colours — that is what lets one mesh per colour serve every flower
-of that colour and keeps ~1,300 of them batchable — so the head's depth comes from shading baked into
+of that colour and keeps ~1,900 of them batchable — so the head's depth comes from shading baked into
 those vertex colours (`Petal Shading`, and the stem/leaf darkening) rather than from a light.
 Edits take effect on the next **R**.
 

@@ -15299,7 +15299,7 @@ MonoBehaviour:
   flattenedYScale: 0.12
   mowedTint: {r: 0.75, g: 0.72, b: 0.45, a: 1}
   flattenSeconds: 0.25
-  flowerSpacing: 0.6
+  flowerSpacing: 0.4
   flowersPerBurst: {x: 1, y: 2}
   landBackDistance: {x: 0.5, y: 1.5}
   landSideSpread: 0.9
