@@ -52,8 +52,11 @@ the result by looking rather than by pressing Play. All are re-runnable and undo
 | `Station ▸ Hinged Doors` | Door meshes → swing open on **E**. Singles or two-leaf doubles; each gets a collider that travels with the panel and a prompt trigger that doesn't | **Orange outline** = shut, **green outline** = open, with the swept arc between them. Preview buttons swing them for real |
 | `Station ▸ Elevator` | Car + two-panel sliding door + call buttons + a ride zone that carries you | **Green box** = bottom stop, **cyan box** = top stop, rails and travel distance between them; dashed outlines where the door panels slide to. Preview buttons park the car at the top for real |
 | `Station ▸ Lighting` | The fix for "everything is dark" — see below | The Scene view is lit live; each lamp draws its reach |
-| `Station ▸ Helmet Off Inside` | A helmet that lifts off the head and gets tucked at the hip when you walk into pressurized air, and goes back on when you leave | **Blue sphere** = worn, **orange sphere** = carried, a **yellow arc** for the path between them, and the zone box that triggers it. Preview buttons park it at either end |
+| `Station ▸ Helmet Off Inside` | A helmet that lifts off the head and gets tucked at the hip when you walk into pressurized air, and goes back on when you leave. **One zone per building** — see below | **Blue sphere** = worn, **orange sphere** = carried, a **yellow arc** for the path between them, and a box per zone with the dead band drawn inside it. Preview buttons park it at either end |
+| `Station ▸ Pressure Chamber Gas` | Gas fills one chamber of the tunnel while you stand in it and vents when you leave. No button, no doors, nothing to get stuck in | **Blue box** = the room, shaded to 45 % so you can see where the gas will sit |
+| `Station ▸ Flying Drone` | The parked drone → **E** launches it, **E** again calls it home. It spins up, lifts off, flies a loop and lands itself | **Blue curve** = the route it will actually fly, **yellow spheres** = draggable markers, **green sphere** = the pad |
 | `Plants ▸ Colour The Produce` | Gives every crop species its own colour — see below | Nothing to preview: it changes the materials, so the Scene view *is* the result |
+| `Grass ▸ Tone Down The Grass` | Puts the lawn, the blades and the scattered tufts back to a green you can read the logo against — see below | Swatches of what all three materials hold right now, so you can see the neon one |
 
 **The four collider modes.** A station needs different collision in different places:
 
@@ -95,11 +98,45 @@ without the zone arguing with you), the right arm reaches up for it using the sa
 pet flourishes, and turning back in the doorway mid-move reverses it rather than being ignored.
 
 **If it's already off when you press Play, the zone is too big.** A zone that contains the spawn point
-means you start sealed in, so there is no crossing to watch. The window now says which side of the line
-you begin on, in metres, and the build warns when the "pressurized area" bucket measures more than
-120 m across — that is the whole import, not one building. Assign the biodome shell itself, or an empty
-you size by hand. **Off already at spawn** stays unticked by default for the same reason. **H** shows
-the move any time regardless.
+means you start sealed in, so there is no crossing to watch. The window says which side of the line
+you begin on, in metres, and warns when a row measures more than 120 m across — that is the whole
+import, not one building. **Off already at spawn** stays unticked by default for the same reason.
+**H** shows the move any time regardless.
+
+**If it comes off and goes back on everywhere, it's one zone doing two jobs.** The pressurized parts of
+this station are not in one place: the biodome is at the origin and the tunnel is 100 m west of it. A
+single box asked to contain both contains the moon — which is how it ended up 184 m across, swallowing
+the spawn point and most of the map. So the zone is a **list**, one box per building, and the helmet is
+off inside any of them. Press **Find the biodome and the tunnel** and it fills the rows, skipping
+anything over 120 m so "dome" can't match the import root that merely *contains* the dome.
+
+The second half of that bug is subtler and worth knowing about, because it bites any trigger volume:
+a boundary you are standing **on** is crossed and re-crossed by every dip in the ground under you, and
+each crossing restarts a 1.5-second animation. The fix is the **boundary margin** — you now have to
+travel 0.75 m *past* a wall before the crossing counts, in either direction, leaving a dead band twice
+that wide around every face. The Scene view draws it as a second, smaller box inside each zone.
+
+**Gas in the tunnel.** `Station ▸ Pressure Chamber Gas` fills one module while you stand in it. It is
+deliberately *not* the airlock controller: that one owns two doors and refuses to run unless both are
+wired and sealed, which is right for a working airlock and wrong for "make the middle of the tunnel feel
+pressurized". Here the chamber is the only thing that exists and it cannot deadlock — being inside drives
+the pressure toward 1, being outside drives it toward 0, whatever state it was in. Presence is **polled
+every frame, not triggered**: a `CharacterController` only fires trigger callbacks while it is *moving*,
+so a player who walks in and stands still would be missed by `OnTriggerEnter` and left in vacuum. The
+fog's emitter box **grows from the floor up** with the pressure rather than just emitting harder, so the
+gas visibly rises to fill the room instead of fading in everywhere at once, and the jets run only while
+the pressure is actually changing — which is what makes the still moment at the end read as *pressurized*
+rather than *still filling*. The tunnel's chambers are the groups ending in `Lock_GRP`; counting in from
+the outside door, `CrewLock` is the first and `EquipLock` the second.
+
+**The drone.** `Station ▸ Flying Drone` puts the flight logic on a **pad beside the drone, not on the
+drone**. That is the whole design: the interaction sensor walks *up* from a trigger collider to find the
+interactable, so the trigger has to sit under the component — and if that were the drone, the trigger
+would take off with it and there would be no way left to call it back. Same lesson as hanging a door's
+prompt on its hinge. The route is a closed Catmull-Rom curve through draggable markers, so if it clips
+the dome you move a marker instead of tuning a radius; the blue curve in the Scene view is sampled the
+same way the drone flies it, so it is the real path and not a sketch. This drone is parked 26 m up, so
+the window raycasts down, reports the drop, and puts the call button on the floor beneath it.
 
 **Why the crops all looked the same.** The imported set ships with a *single* material shared by nearly
 everything green: a carrot's root, a beetroot's root, a corn stalk and a tree's leaves are literally the
@@ -110,7 +147,20 @@ plant by name and gives every species its own material per part (root / leaf / f
 moves. The copies are ordinary `.mat` files in `Materials/Produce`, so you can open any of them and
 tune it by hand afterwards. **Count what matches** tells you what the names resolve to before you
 commit, and **Put the imported colours back** really does — a `ProduceTint` object records what every
-renderer had, by reference, so it survives renaming and reloading.
+renderer had, by reference, so it survives renaming and reloading. Re-running lands on the *same*
+`.mat` files each time; it used to call `GenerateUniqueAssetPath`, which left the previous set behind
+as `Produce_Carrot_Main 1.mat`, ` 2`, ` 3` on every pass.
+
+**Why the grass then went neon.** That window ends with a "boost the hand-made plant materials" pass,
+and `Grass.mat` was on its list — so the lawn went from a muted `(0.20, 0.42, 0.16)` to a fully
+saturated `(0.10, 0.67, 0.00)` and the mown logo stopped reading. Crops and grass want *opposite*
+treatments: a crop is the thing you look at, so saturation helps it; grass is the surface the logo is
+drawn **on**, so every bit of saturation spent on the green is contrast taken away from the cut. Grass
+is off that list now and lives in `Grass ▸ Tone Down The Grass`, which moves all three grass materials
+together — the ground plane, the blade tips/roots/mown colour, and the scattered tufts. While you are
+there: those tufts have been **pure white since they were made**, which is most of "too bright". The
+scatter copies the FBX's own untinted material so it can turn GPU instancing on, and the green fallback
+in that copy only fires when the model has no material at all — which it does have.
 
 **Why the scene was dark**, and what `Station ▸ Lighting` does about it: one directional light was
 lighting an entire moon base; the dome was **casting a shadow over its own contents** (a closed glass
@@ -128,7 +178,7 @@ second: those lift everything at once, where another lamp only lifts one room.
 |---|---|
 | WASD + mouse | Walk / look (first person) |
 | Shift | Run · **Space** jump (tap = low hop, hold = full float) |
-| **E** | Interact — **swing a door open**, pick fruit, pat duck, **sit in a chair**, **call the elevator** (prompt appears within ~2 m) |
+| **E** | Interact — **swing a door open**, pick fruit, pat duck, **sit in a chair**, **call the elevator**, **launch the drone** (prompt appears within ~2 m) |
 | **E** (seated) | Stand up again |
 | **H** | Take the helmet off / put it back on (it also comes off by itself on walking inside) |
 | **C** | Toggle first-person ↔ free-fly camera |
@@ -297,6 +347,8 @@ Every sound moment already has an empty `AudioClip` slot — import a clip and d
 | Door servo open/close | `Airlock/DOOR_Outer` + `DOOR_Inner` → **Simple Door → Open/Close Clip** |
 | Hinge creak / latch | each swinging door panel → **Hinged Door → Open/Close Clip** |
 | Pressurization hiss (looped) | `Airlock` → **Airlock Controller → Hiss Clip** |
+| Chamber gas hiss (looped) + the clunk when it seals | `PressureChambers/PressureChamber_…` → **Pressure Chamber → Hiss / Sealed Clip** |
+| Rotor loop (pitched and faded with the throttle) | `DronePad` → **Drone Flight → Rotor Loop** |
 | Duck quack (on pat) | each `Duck_XX` → **Water Wanderer → Quack Clip** |
 | Bite crunch | `Astronaut` → **Hand Action Controller → Bite Clip**, or per-object on **Eatable Object → Bite Clip** |
 | Pat thump | per-object on **Pettable Object → Pat Clip** |

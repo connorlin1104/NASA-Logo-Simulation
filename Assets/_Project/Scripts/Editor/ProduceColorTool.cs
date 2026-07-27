@@ -139,8 +139,10 @@ namespace NasaSim.EditorTools
             EditorGUILayout.Space();
             _alsoHandMade = EditorGUILayout.BeginToggleGroup(
                 new GUIContent("Also punch up the hand-made plant materials",
-                               "Fruit, TreeCanopy, GrassClump and GrassBlades — the materials this " +
-                               "project made itself, edited in place."),
+                               "Fruit and TreeCanopy — the plant materials this project made itself, " +
+                               "edited in place. The grass is deliberately left out: it is the surface " +
+                               "the mown logo is drawn on, so saturating it hides the letters. Use " +
+                               "Grass > Tone Down The Grass for that."),
                 _alsoHandMade);
             EditorGUI.indentLevel++;
             _handMadeBoost = EditorGUILayout.Slider(
@@ -299,7 +301,8 @@ namespace NasaSim.EditorTools
 
             Directory.CreateDirectory(MaterialDir);
 
-            var made = new Dictionary<string, Material>();   // species|part|sourceInstanceID -> material
+            var made = new Dictionary<string, Material>();   // species|part|sourceKey -> material
+            var variants = new Dictionary<string, int>();    // species|part -> how many sources so far
             int touched = 0, slots = 0;
 
             var renderers = new List<Renderer>();
@@ -331,7 +334,7 @@ namespace NasaSim.EditorTools
                         Material src = originals[m];
                         if (src == null) { replacement[m] = null; continue; }
 
-                        Material tinted = GetOrCreate(made, s, part, src);
+                        Material tinted = GetOrCreate(made, variants, s, part, src);
                         replacement[m] = tinted;
                         if (tinted != src) { changed = true; slots++; }
                     }
@@ -386,7 +389,8 @@ namespace NasaSim.EditorTools
         /// whose parts came in on two different imported materials keeps them apart instead of flattening
         /// both onto one.
         /// </summary>
-        Material GetOrCreate(Dictionary<string, Material> made, Species s, Part part, Material src)
+        Material GetOrCreate(Dictionary<string, Material> made, Dictionary<string, int> variants,
+                             Species s, Part part, Material src)
         {
             string key = $"{s.key}|{part}|{SourceKey(src)}";
             if (made.TryGetValue(key, out Material existing)) return existing;
@@ -401,10 +405,36 @@ namespace NasaSim.EditorTools
             }
             final.a = from.a;
 
-            string path = AssetDatabase.GenerateUniqueAssetPath(
-                $"{MaterialDir}/Produce_{Capitalise(s.key)}_{part}.mat");
+            // A path derived from the RUN, and reused. This used to call GenerateUniqueAssetPath, which
+            // meant every re-run left the previous set behind as "Produce_Carrot_Main 1.mat", " 2", " 3" —
+            // orphans nothing referenced, that only the newest revert log could undo. Recolouring is
+            // something you do repeatedly while tuning, so it has to land on the same files each time.
+            //
+            // A species can still legitimately need more than one output for the same part, when its
+            // pieces came in on two different import materials. That gets a _b, _c suffix counted within
+            // this run, which is stable across runs because the renderers are walked in scene order.
+            string family = $"{s.key}|{part}";
+            variants.TryGetValue(family, out int nth);
+            variants[family] = nth + 1;
 
-            var mat = new Material(src) { name = Path.GetFileNameWithoutExtension(path) };
+            string stem = $"{MaterialDir}/Produce_{Capitalise(s.key)}_{part}";
+            string path = nth == 0 ? $"{stem}.mat" : $"{stem}_{(char)('b' + nth - 1)}.mat";
+            string niceName = Path.GetFileNameWithoutExtension(path);
+
+            Material mat = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (mat != null)
+            {
+                // Re-seat it on the source material first: the species may now be classified onto a
+                // different import material than last run, and CopyPropertiesFromMaterial brings the
+                // shader and every map across with it.
+                if (mat.shader != src.shader) mat.shader = src.shader;
+                mat.CopyPropertiesFromMaterial(src);
+            }
+            else
+            {
+                mat = new Material(src) { name = niceName };
+            }
+
             WriteColor(mat, final);
             if (_dropTextures)
             {
@@ -412,7 +442,9 @@ namespace NasaSim.EditorTools
                 if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", null);
             }
 
-            AssetDatabase.CreateAsset(mat, path);
+            if (AssetDatabase.LoadAssetAtPath<Material>(path) == null) AssetDatabase.CreateAsset(mat, path);
+            else EditorUtility.SetDirty(mat);
+
             made[key] = mat;
             return mat;
         }
@@ -453,7 +485,11 @@ namespace NasaSim.EditorTools
         /// </summary>
         int BoostHandMade()
         {
-            string[] names = { "Fruit", "TreeCanopy", "GrassClump", "GrassBlades", "Grass" };
+            // Grass is deliberately NOT on this list. It used to be, and boosting it pushed the lawn
+            // plane to a fully saturated green that swallowed the mown logo — grass is the surface the
+            // logo is drawn on, so it wants the opposite of what a crop wants. It lives in its own
+            // window now: Tools > NASA Sim > Grass > Tone Down The Grass.
+            string[] names = { "Fruit", "TreeCanopy" };
             int n = 0;
 
             foreach (string name in names)

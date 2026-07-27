@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 #if ENABLE_INPUT_SYSTEM
@@ -43,9 +45,57 @@ namespace NasaSim
                  "pelvis bone so it moves with the walk.")]
         public Transform holdAnchor;
 
-        [Header("Pressurized zone")]
-        [Tooltip("Cross into this box and the helmet comes off; cross out and it goes back on. Leave " +
-                 "empty to work the helmet by hand only.")]
+        /// <summary>
+        /// One pressurized volume. There is a LIST of these rather than a single box because the
+        /// pressurized parts of this station are not in one place — the biodome sits at the origin and
+        /// the tunnel is 100 m away — and a single box asked to contain both ends up containing the moon.
+        /// </summary>
+        [Serializable]
+        public sealed class Zone
+        {
+            public string label = "zone";
+            [Tooltip("The box's centre and rotation. The helmet comes off inside it.")]
+            public Transform center;
+            public Vector3 size = new Vector3(40f, 20f, 40f);
+
+            public Zone() { }
+
+            public Zone(string label, Transform center, Vector3 size)
+            {
+                this.label = label;
+                this.center = center;
+                this.size = size;
+            }
+
+            /// <summary>
+            /// Metres to the nearest wall: positive inside, negative outside. Signed depth rather than a
+            /// bool because the same number drives the hysteresis, the editor's "how far in are you"
+            /// readout, and the choice of which zone you are most firmly inside.
+            /// </summary>
+            public float Depth(Vector3 world)
+            {
+                if (center == null) return float.NegativeInfinity;
+                Vector3 local = center.InverseTransformPoint(world);
+                Vector3 half = size * 0.5f;
+                return Mathf.Min(half.x - Mathf.Abs(local.x),
+                                 half.y - Mathf.Abs(local.y),
+                                 half.z - Mathf.Abs(local.z));
+            }
+        }
+
+        [Header("Pressurized zones")]
+        [Tooltip("The helmet comes off inside ANY of these and goes back on outside all of them. " +
+                 "Normally one for the biodome and one for the tunnel. Empty means H key only.")]
+        public List<Zone> zones = new List<Zone>();
+
+        [Tooltip("How far past a wall you must travel before the crossing counts, in metres. Without it " +
+                 "a boundary you happen to be standing on flickers the helmet on and off as the ground " +
+                 "rises and falls under you.")]
+        [Min(0f)] public float boundaryMargin = 0.75f;
+
+        [Header("Legacy single zone (superseded by the list above)")]
+        [Tooltip("The original one-box field. Still honoured so scenes built before the list existed keep " +
+                 "working; the builder tool moves it into the list and clears it.")]
         public Transform pressurizedZone;
         public Vector3 zoneSize = new Vector3(44f, 14f, 44f);
         [Tooltip("Start with the helmet already off when the astronaut spawns inside the zone. Off by " +
@@ -183,7 +233,14 @@ namespace NasaSim
 
             // Edge-triggered, not level-triggered: level-triggering would undo every manual press the
             // instant it was made, because standing still outside the zone permanently "wants" it on.
-            bool inside = ZoneContains(Probe);
+            //
+            // The margin is what stops it chattering. A boundary you are standing ON is crossed and
+            // re-crossed by every dip in the ground, and each crossing restarts a 1.5 s animation — the
+            // symptom is a helmet that comes off and goes back on continuously as you walk. You now have
+            // to travel boundaryMargin metres PAST the wall before the crossing counts, in either
+            // direction, which leaves a dead band twice that wide around every face of every zone.
+            float depth = ZoneDepth(Probe);
+            bool inside = _wasInside ? depth > -boundaryMargin : depth > boundaryMargin;
             if (inside != _wasInside)
             {
                 _wasInside = inside;
@@ -232,6 +289,32 @@ namespace NasaSim
             helmet.SetPositionAndRotation(pos, Quaternion.Slerp(wornRot, heldRot, carry));
         }
 
+        void DrawZone(Zone z)
+        {
+            if (z == null || z.center == null) return;
+
+            Gizmos.color = zoneColor;
+            Gizmos.matrix = Matrix4x4.TRS(z.center.position, z.center.rotation, Vector3.one);
+            Gizmos.DrawWireCube(Vector3.zero, z.size);
+
+            // The dead band, drawn as the inner box you must actually reach for the crossing to count.
+            if (boundaryMargin > 0.01f)
+            {
+                Vector3 inner = new Vector3(Mathf.Max(0.1f, z.size.x - boundaryMargin * 2f),
+                                            Mathf.Max(0.1f, z.size.y - boundaryMargin * 2f),
+                                            Mathf.Max(0.1f, z.size.z - boundaryMargin * 2f));
+                Gizmos.color = new Color(zoneColor.r, zoneColor.g, zoneColor.b, zoneColor.a * 0.35f);
+                Gizmos.DrawWireCube(Vector3.zero, inner);
+            }
+
+            Gizmos.matrix = Matrix4x4.identity;
+#if UNITY_EDITOR
+            UnityEditor.Handles.color = zoneColor;
+            UnityEditor.Handles.Label(z.center.position + Vector3.up * (z.size.y * 0.5f + 0.4f),
+                $"helmet off inside: {z.label}");
+#endif
+        }
+
         static void GetPose(Transform anchor, Vector3 localPos, Quaternion localRot,
                             out Vector3 pos, out Quaternion rot)
         {
@@ -259,14 +342,68 @@ namespace NasaSim
 
         Vector3 Probe => transform.position + Vector3.up * 0.9f;   // mid-body
 
-        public bool ZoneContains(Vector3 worldPoint)
+        // Reused rather than allocated per call: this is read every LateUpdate and it only ever mirrors
+        // the two legacy fields.
+        readonly Zone _legacy = new Zone("legacy", null, Vector3.zero);
+
+        /// <summary>True if any zone at all is wired up, list or legacy.</summary>
+        public bool HasAnyZone
         {
-            if (pressurizedZone == null) return false;
-            Vector3 local = pressurizedZone.InverseTransformPoint(worldPoint);
-            Vector3 half = zoneSize * 0.5f;
-            return Mathf.Abs(local.x) <= half.x &&
-                   Mathf.Abs(local.y) <= half.y &&
-                   Mathf.Abs(local.z) <= half.z;
+            get
+            {
+                if (pressurizedZone != null) return true;
+                if (zones == null) return false;
+                for (int i = 0; i < zones.Count; i++)
+                    if (zones[i] != null && zones[i].center != null) return true;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Metres inside the zone this point sits deepest in, negative if it is outside every one. The
+        /// deepest rather than the first, so overlapping zones behave like one merged volume instead of
+        /// fighting at the seam.
+        /// </summary>
+        public float ZoneDepth(Vector3 worldPoint)
+        {
+            float best = float.NegativeInfinity;
+
+            if (zones != null)
+            {
+                for (int i = 0; i < zones.Count; i++)
+                {
+                    if (zones[i] == null) continue;
+                    best = Mathf.Max(best, zones[i].Depth(worldPoint));
+                }
+            }
+
+            if (pressurizedZone != null)
+            {
+                _legacy.center = pressurizedZone;
+                _legacy.size = zoneSize;
+                best = Mathf.Max(best, _legacy.Depth(worldPoint));
+            }
+
+            return best;
+        }
+
+        public bool ZoneContains(Vector3 worldPoint) => ZoneDepth(worldPoint) >= 0f;
+
+        /// <summary>The zone the point is deepest inside, or null. Used by the builder tool's readout.</summary>
+        public Zone ZoneAt(Vector3 worldPoint)
+        {
+            Zone best = null;
+            float bestDepth = float.NegativeInfinity;
+            if (zones != null)
+            {
+                for (int i = 0; i < zones.Count; i++)
+                {
+                    if (zones[i] == null) continue;
+                    float d = zones[i].Depth(worldPoint);
+                    if (d > bestDepth) { bestDepth = d; best = zones[i]; }
+                }
+            }
+            return best;
         }
 
         void Play(AudioClip clip)
@@ -290,18 +427,16 @@ namespace NasaSim
         {
             if (!showGizmo) return;
 
+            if (zones != null)
+                for (int i = 0; i < zones.Count; i++)
+                    DrawZone(zones[i]);
+
             if (pressurizedZone != null)
             {
-                Gizmos.color = zoneColor;
-                Gizmos.matrix = Matrix4x4.TRS(pressurizedZone.position, pressurizedZone.rotation,
-                                              Vector3.one);
-                Gizmos.DrawWireCube(Vector3.zero, zoneSize);
-                Gizmos.matrix = Matrix4x4.identity;
-#if UNITY_EDITOR
-                UnityEditor.Handles.color = zoneColor;
-                UnityEditor.Handles.Label(pressurizedZone.position + Vector3.up * (zoneSize.y * 0.5f + 0.4f),
-                    "helmet comes off inside here");
-#endif
+                _legacy.center = pressurizedZone;
+                _legacy.size = zoneSize;
+                _legacy.label = "legacy zone — move me into the list";
+                DrawZone(_legacy);
             }
 
             if (helmet == null) return;

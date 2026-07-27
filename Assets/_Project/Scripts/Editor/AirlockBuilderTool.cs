@@ -177,7 +177,7 @@ namespace NasaSim.EditorTools
             return b;
         }
 
-        static ParticleSystem BuildVent(Transform parent, string name, Vector3 pos, Vector3 aim, Material mat)
+        internal static ParticleSystem BuildVent(Transform parent, string name, Vector3 pos, Vector3 aim, Material mat)
         {
             var ps = NewParticleObject(parent, name, pos, Quaternion.LookRotation(aim, Vector3.up), mat);
 
@@ -218,7 +218,7 @@ namespace NasaSim.EditorTools
             return ps;
         }
 
-        static ParticleSystem NewParticleObject(Transform parent, string name, Vector3 pos, Quaternion rot,
+        internal static ParticleSystem NewParticleObject(Transform parent, string name, Vector3 pos, Quaternion rot,
                                                 Material mat)
         {
             var go = new GameObject(name);
@@ -242,7 +242,7 @@ namespace NasaSim.EditorTools
             return ps;
         }
 
-        static void SetGrowAndFade(ParticleSystem ps, float startScale, float endScale)
+        internal static void SetGrowAndFade(ParticleSystem ps, float startScale, float endScale)
         {
             var sol = ps.sizeOverLifetime;
             sol.enabled = true;
@@ -257,7 +257,7 @@ namespace NasaSim.EditorTools
             col.color = new ParticleSystem.MinMaxGradient(grad);
         }
 
-        static Material MakeGasMaterial()
+        internal static Material MakeGasMaterial()
         {
             var mat = AssetDatabase.LoadAssetAtPath<Material>(GasMatPath);
             if (mat == null)

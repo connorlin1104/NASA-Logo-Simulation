@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -29,12 +30,17 @@ namespace NasaSim.EditorTools
         const string PlaceholderName = "PH_Helmet";
         const string HoldAnchorName = "HelmetHoldAnchor";
         const string ZoneName = "HelmetZone";
+        const string ZoneRootName = "HelmetZones";
         const string VisorMatPath = "Assets/_Project/Materials/HelmetVisor.mat";
         const string ShellMatPath = "Assets/_Project/Materials/HelmetShell.mat";
 
         [SerializeField] GameObject _astronaut;
         [SerializeField] GameObject _helmetMesh;
-        [SerializeField] GameObject _pressurizedArea;
+
+        // A LIST, because the pressurized parts of this station are not in one place: the biodome is at
+        // the origin and the tunnel is 100 m west of it. One box asked to hold both holds the whole map,
+        // which is how the zone ended up 184 m across and swallowing the spawn point.
+        [SerializeField] List<GameObject> _areas = new List<GameObject>();
 
         [SerializeField] float _helmetRadius = 0.17f;
         [SerializeField] float _forwardNudge = 0.02f;
@@ -53,6 +59,7 @@ namespace NasaSim.EditorTools
         [SerializeField] bool _buildZone = true;
         [SerializeField] float _zoneShrink = 0.9f;
         [SerializeField] float _zoneHeight = 14f;
+        [SerializeField] float _boundaryMargin = 0.75f;
         [SerializeField] bool _matchOnStart;
 
         [MenuItem("Tools/NASA Sim/Station/Helmet Off Inside")]
@@ -82,9 +89,7 @@ namespace NasaSim.EditorTools
                 "Optional. Your helmet FBX or a scene copy of it — a DUPLICATE of the helmet portion, " +
                 "since the astronaut model has no separable one. Empty = a placeholder visor.",
                 _helmetMesh);
-            _pressurizedArea = Bucket("Pressurized area",
-                "The group whose size the trigger zone is taken from — normally the biodome.",
-                _pressurizedArea);
+            DrawAreaList();
 
             if (GUILayout.Button("Find these in the scene")) AutoFind();
 
@@ -134,6 +139,13 @@ namespace NasaSim.EditorTools
                 _zoneShrink, 0.4f, 1.2f);
             _zoneHeight = EditorGUILayout.Slider(
                 new GUIContent("Zone height (m)"), _zoneHeight, 3f, 60f);
+            _boundaryMargin = EditorGUILayout.Slider(
+                new GUIContent("Boundary margin (m)",
+                               "How far past a wall you must walk before the crossing counts. This is " +
+                               "what stops the helmet coming off and going back on repeatedly while you " +
+                               "walk along a boundary — without it, every dip in the ground under a " +
+                               "zone's floor is another crossing."),
+                _boundaryMargin, 0f, 3f);
             _matchOnStart = EditorGUILayout.Toggle(
                 new GUIContent("Off already at spawn", "Start the game with the helmet already off if the " +
                                                        "astronaut spawns inside the zone. Normally left " +
@@ -169,6 +181,67 @@ namespace NasaSim.EditorTools
                                                     typeof(GameObject), true);
 
         /// <summary>
+        /// One row per pressurized building. Each gets its own box, and the helmet is off inside any of
+        /// them — which is the only way to cover a biodome and a tunnel 100 m apart without also covering
+        /// everything in between.
+        /// </summary>
+        void DrawAreaList()
+        {
+            EditorGUILayout.LabelField(
+                new GUIContent("Pressurized areas",
+                               "One per building with air in it. The trigger box is measured from each " +
+                               "one's meshes."),
+                EditorStyles.miniBoldLabel);
+
+            if (_areas == null) _areas = new List<GameObject>();
+
+            int remove = -1;
+            for (int i = 0; i < _areas.Count; i++)
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    _areas[i] = (GameObject)EditorGUILayout.ObjectField(
+                        GUIContent.none, _areas[i], typeof(GameObject), true);
+
+                    if (_areas[i] != null && StationBuild.TryRendererBounds(_areas[i], out Bounds b))
+                    {
+                        bool huge = b.size.x > 120f || b.size.z > 120f;
+                        var style = new GUIStyle(EditorStyles.miniLabel)
+                        {
+                            normal = { textColor = huge ? new Color(0.95f, 0.55f, 0.2f)
+                                                        : EditorStyles.miniLabel.normal.textColor }
+                        };
+                        GUILayout.Label($"{b.size.x:0} × {b.size.z:0} m", style, GUILayout.Width(80f));
+                    }
+                    else
+                    {
+                        GUILayout.Label(string.Empty, GUILayout.Width(80f));
+                    }
+
+                    if (GUILayout.Button("−", GUILayout.Width(24f))) remove = i;
+                }
+            }
+            if (remove >= 0) _areas.RemoveAt(remove);
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button("Add a row")) _areas.Add(null);
+                if (GUILayout.Button("Find the biodome and the tunnel")) FindAreas(replace: true);
+            }
+
+            foreach (GameObject a in _areas)
+            {
+                if (a == null || !StationBuild.TryRendererBounds(a, out Bounds b)) continue;
+                if (b.size.x <= 120f && b.size.z <= 120f) continue;
+                EditorGUILayout.HelpBox(
+                    $"'{a.name}' measures {b.size.x:0} × {b.size.z:0} m — that is most of the map, not " +
+                    "one building. A zone this size covers the spawn point and everywhere you walk, so " +
+                    "the helmet comes off and goes on more or less at random. Point this row at the " +
+                    "building's own shell instead.", MessageType.Warning);
+            }
+        }
+
+        /// <summary>
         /// The one thing that silently ruins this feature: a zone that already contains the spawn point.
         /// The helmet is then either off before you can look at it, or waiting for a boundary you are
         /// standing on the wrong side of. So the window says which side of the line you start on, in
@@ -177,30 +250,37 @@ namespace NasaSim.EditorTools
         void DrawSpawnCheck()
         {
             var rig = FindRig();
-            if (rig == null || rig.pressurizedZone == null) return;
+            if (rig == null || !rig.HasAnyZone) return;
 
             Vector3 spawn = (_astronaut != null ? _astronaut.transform.position
                                                 : rig.transform.position) + Vector3.up * 0.9f;
-            bool inside = rig.ZoneContains(spawn);
+            float depth = rig.ZoneDepth(spawn);
 
-            Vector3 local = rig.pressurizedZone.InverseTransformPoint(spawn);
-            Vector3 half = rig.zoneSize * 0.5f;
-            float slack = Mathf.Min(Mathf.Min(half.x - Mathf.Abs(local.x), half.y - Mathf.Abs(local.y)),
-                                    half.z - Mathf.Abs(local.z));
-
-            if (inside)
+            if (rig.pressurizedZone != null)
                 EditorGUILayout.HelpBox(
-                    $"The astronaut spawns INSIDE the zone — {Mathf.Abs(slack):0.0} m in from the nearest " +
-                    $"wall of a {rig.zoneSize.x:0} × {rig.zoneSize.y:0} × {rig.zoneSize.z:0} m box.\n\n" +
+                    "This helmet still has the old single-box zone attached as well as the list. Build " +
+                    "again and it will be folded into the list and cleared.", MessageType.Warning);
+
+            int count = rig.zones != null ? rig.zones.Count : 0;
+            string where = count == 1 ? "the zone" : $"any of the {count} zones";
+
+            if (depth >= 0f)
+            {
+                HelmetRemoval.Zone z = rig.ZoneAt(spawn);
+                EditorGUILayout.HelpBox(
+                    $"The astronaut spawns INSIDE {(z != null ? $"'{z.label}'" : "the zone")} — " +
+                    $"{depth:0.0} m in from its nearest wall.\n\n" +
                     "You will start already sealed in, so nothing happens until you walk out and back in. " +
-                    "Either shrink the zone to the pressurized part only, or move the spawn outside it. " +
                     "Press H any time to see the move regardless.",
                     MessageType.Warning);
+            }
             else
+            {
                 EditorGUILayout.HelpBox(
-                    $"The astronaut spawns outside the zone, {Mathf.Abs(slack):0.0} m from it. Walk in and " +
+                    $"The astronaut spawns outside {where}, {-depth:0.0} m from the nearest. Walk in and " +
                     "the helmet comes off.",
                     MessageType.None);
+            }
         }
 
         // ================================================================== find
@@ -213,19 +293,46 @@ namespace NasaSim.EditorTools
                 if (a != null) _astronaut = a.gameObject;
             }
 
-            if (_pressurizedArea == null)
+            if (_areas == null) _areas = new List<GameObject>();
+            if (_areas.Count == 0) FindAreas(replace: false);
+        }
+
+        /// <summary>
+        /// Every building that plausibly holds air: the biodome and the connecting tunnel. Each is picked
+        /// as the LARGEST match under 120 m across — the size ceiling is the whole trick, because without
+        /// it "dome" also matches the imported environment root that contains the dome, and the zone
+        /// silently becomes the map.
+        /// </summary>
+        void FindAreas(bool replace)
+        {
+            if (_areas == null) _areas = new List<GameObject>();
+            if (replace) _areas.Clear();
+
+            AddBest("biodome", "dome", "biosphere", "greenhouse");
+            AddBest("tunnel", "tunnel", "airlock", "corridor");
+
+            if (_areas.Count == 0)
+                Debug.LogWarning("[Helmet] Nothing recognisable as a pressurized building was found. Drop " +
+                                 "the biodome shell and the tunnel into the rows by hand.");
+        }
+
+        void AddBest(string what, params string[] words)
+        {
+            Transform best = null;
+            float bestSize = 0f;
+
+            foreach (var t in StationBuild.FindAllContaining(words))
             {
-                // The biggest thing called "dome" — the biodome shell, not a light fixture named after it.
-                Transform best = null;
-                float bestSize = 0f;
-                foreach (var t in StationBuild.FindAllContaining("dome", "biosphere", "greenhouse"))
-                {
-                    if (!StationBuild.TryRendererBounds(t.gameObject, out Bounds b)) continue;
-                    float size = b.size.x * b.size.z;
-                    if (size > bestSize) { bestSize = size; best = t; }
-                }
-                if (best != null) _pressurizedArea = best.gameObject;
+                if (!StationBuild.TryRendererBounds(t.gameObject, out Bounds b)) continue;
+                if (b.size.x > 120f || b.size.z > 120f) continue;    // that is the map, not a building
+                float size = b.size.x * b.size.z;
+                if (size > bestSize) { bestSize = size; best = t; }
             }
+
+            if (best == null) return;
+            if (_areas.Contains(best.gameObject)) return;
+            _areas.Add(best.gameObject);
+            Debug.Log($"[Helmet] Using '{best.name}' as the {what}.", best);
         }
 
         HelmetRemoval FindRig() =>
@@ -294,9 +401,16 @@ namespace NasaSim.EditorTools
             rig.holdAnchor = hold;
             rig.CaptureHeldPose(Vector3.zero, Quaternion.identity);
 
-            // ---- the zone ----
-            if (_buildZone) BuildZone(rig);
-            else rig.pressurizedZone = null;
+            // ---- the zones ----
+            if (_buildZone)
+            {
+                BuildZones(rig);
+            }
+            else
+            {
+                rig.zones.Clear();
+                rig.pressurizedZone = null;
+            }
 
             // ---- settings ----
             rig.takeOffSeconds = _takeOffSeconds;
@@ -317,14 +431,16 @@ namespace NasaSim.EditorTools
             Debug.Log($"[Helmet] Built on '{_astronaut.name}'.\n" +
                       $"  Worn on: {(head != null ? head.name : "(nothing — assign a head bone)")}   ·   " +
                       $"carried at: {hold.name}\n" +
-                      $"  {(rig.pressurizedZone != null ? $"Comes off inside a {rig.zoneSize.x:0} × {rig.zoneSize.y:0} × {rig.zoneSize.z:0} m zone" : "No zone — H key only")}" +
+                      $"  {DescribeZones(rig)}" +
                       (_enableKey ? ", or press H anywhere." : ".") + "\n" +
-                      (rig.pressurizedZone != null
-                          ? "  Spawn point is " +
+                      (rig.HasAnyZone
+                          ? $"  Crossings need {rig.boundaryMargin:0.00} m of travel past a wall to count, " +
+                            "so walking along a boundary no longer flickers it on and off.\n" +
+                            "  Spawn point is " +
                             (rig.ZoneContains(_astronaut.transform.position + Vector3.up * 0.9f)
-                                ? "INSIDE that zone, so you start sealed in and see nothing until you walk " +
-                                  "out and back — shrink the zone or move the spawn.\n"
-                                : "outside it, so walking in triggers the take-off.\n")
+                                ? "INSIDE a zone, so you start sealed in and see nothing until you walk " +
+                                  "out and back — shrink that zone or move the spawn.\n"
+                                : "outside them all, so walking in triggers the take-off.\n")
                           : string.Empty) +
                       "  Scene view: blue sphere = worn, orange sphere = carried, the yellow arc is the " +
                       "path it takes. Use the Preview buttons to park it at either end and look." +
@@ -453,38 +569,72 @@ namespace NasaSim.EditorTools
             return anchor.transform;
         }
 
-        void BuildZone(HelmetRemoval rig)
+        void BuildZones(HelmetRemoval rig)
         {
-            if (_pressurizedArea == null ||
-                !StationBuild.TryRendererBounds(_pressurizedArea, out Bounds b))
+            rig.zones.Clear();
+
+            // The old single-box fields are cleared here rather than left dangling. They are still read at
+            // runtime for scenes that were built before the list existed, so leaving one behind would mean
+            // an invisible extra zone quietly overlapping the new ones.
+            rig.pressurizedZone = null;
+
+            var root = StationBuild.GeneratedRoot(ZoneRootName, clearChildren: true);
+            Undo.RecordObject(root.transform, "Build Helmet");
+            root.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+
+            int built = 0;
+            foreach (GameObject area in _areas)
             {
-                rig.pressurizedZone = null;
-                Debug.LogWarning("[Helmet] No pressurized area assigned (or it has no meshes), so the " +
-                                 "helmet will only come off with the H key. Drop the biodome into the " +
-                                 "'Pressurized area' bucket and build again.");
-                return;
+                if (area == null || !StationBuild.TryRendererBounds(area, out Bounds b)) continue;
+
+                var zone = StationBuild.FindOrCreateChild(
+                    root.transform, $"{ZoneName}_{StationBuild.Sanitize(area.name)}");
+                Undo.RecordObject(zone.transform, "Build Helmet");
+
+                // Take the area's real height and only then clamp — a Min(slider, height) would reduce a
+                // dome measured as a wide flat shell to a 3 m slab, which you can walk clean over.
+                float height = Mathf.Clamp(b.size.y, 3f, _zoneHeight);
+                zone.transform.SetPositionAndRotation(
+                    new Vector3(b.center.x, b.min.y + height * 0.5f, b.center.z), Quaternion.identity);
+
+                rig.zones.Add(new HelmetRemoval.Zone(
+                    area.name, zone.transform,
+                    new Vector3(b.size.x * _zoneShrink, height, b.size.z * _zoneShrink)));
+                built++;
             }
 
-            var zone = StationBuild.GeneratedRoot(ZoneName, clearChildren: false);
-            Undo.RecordObject(zone.transform, "Build Helmet");
+            rig.boundaryMargin = _boundaryMargin;
 
-            // Take the area's real height and only then clamp — the old Min(slider, height) reduced a
-            // dome measured as a wide flat shell to a 3 m slab, which you could walk clean over.
-            float height = Mathf.Clamp(b.size.y, 3f, _zoneHeight);
-            zone.transform.position = new Vector3(b.center.x, b.min.y + height * 0.5f, b.center.z);
-            zone.transform.rotation = Quaternion.identity;
-
-            rig.pressurizedZone = zone.transform;
-            rig.zoneSize = new Vector3(b.size.x * _zoneShrink, height, b.size.z * _zoneShrink);
-
-            // A zone this big means the bucket caught the whole import rather than the pressurized part.
-            // Say so now: the symptom later is a helmet that is simply never on.
-            if (b.size.x > 120f || b.size.z > 120f)
+            // A zone that is 120 m across means the row caught the whole import rather than the
+            // pressurized part. Say so now: the symptom later is a helmet that is simply never on.
+            foreach (HelmetRemoval.Zone z in rig.zones)
+            {
+                if (z.size.x <= 120f && z.size.z <= 120f) continue;
                 Debug.LogWarning(
-                    $"[Helmet] The pressurized area '{_pressurizedArea.name}' measures " +
-                    $"{b.size.x:0} × {b.size.z:0} m — that is most of the map, not one building. The zone " +
-                    "will cover the spawn point and very likely everything else. Assign the biodome shell " +
-                    "itself (or an empty you size by hand) and build again.", _pressurizedArea);
+                    $"[Helmet] Zone '{z.label}' came out {z.size.x:0} × {z.size.z:0} m — that is most of " +
+                    "the map, not one building. It will cover the spawn point and very likely everywhere " +
+                    "you walk. Point that row at the building's own shell and build again.");
+            }
+
+            if (built == 0)
+                Debug.LogWarning("[Helmet] No pressurized areas assigned (or none of them have meshes), " +
+                                 "so the helmet will only come off with the H key. Press 'Find the " +
+                                 "biodome and the tunnel', or fill the rows by hand, and build again.");
+        }
+
+        /// <summary>A one-line summary of the zones for the build log.</summary>
+        static string DescribeZones(HelmetRemoval rig)
+        {
+            if (rig.zones == null || rig.zones.Count == 0) return "No zones — H key only";
+
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < rig.zones.Count; i++)
+            {
+                HelmetRemoval.Zone z = rig.zones[i];
+                if (i > 0) sb.Append("; ");
+                sb.Append($"{z.label} {z.size.x:0} × {z.size.y:0} × {z.size.z:0} m");
+            }
+            return $"Comes off inside {rig.zones.Count} zone(s): {sb}";
         }
 
         // ================================================================== preview / teardown
@@ -507,8 +657,12 @@ namespace NasaSim.EditorTools
                 Undo.DestroyObjectImmediate(rig.helmet.gameObject);
             }
             if (rig.holdAnchor != null) Undo.DestroyObjectImmediate(rig.holdAnchor.gameObject);
+
+            var zoneRoot = GameObject.Find(ZoneRootName);
+            if (zoneRoot != null) Undo.DestroyObjectImmediate(zoneRoot);
             if (rig.pressurizedZone != null && rig.pressurizedZone.name == ZoneName)
                 Undo.DestroyObjectImmediate(rig.pressurizedZone.gameObject);
+
             Undo.DestroyObjectImmediate(rig);
 
             EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
