@@ -53,6 +53,7 @@ namespace NasaSim.EditorTools
         [SerializeField] bool _buildZone = true;
         [SerializeField] float _zoneShrink = 0.9f;
         [SerializeField] float _zoneHeight = 14f;
+        [SerializeField] bool _matchOnStart;
 
         [MenuItem("Tools/NASA Sim/Station/Helmet Off Inside")]
         public static void Open()
@@ -132,9 +133,17 @@ namespace NasaSim.EditorTools
                                             "footprint. Under 1 keeps its corners inside a round dome."),
                 _zoneShrink, 0.4f, 1.2f);
             _zoneHeight = EditorGUILayout.Slider(
-                new GUIContent("Zone height (m)"), _zoneHeight, 3f, 40f);
+                new GUIContent("Zone height (m)"), _zoneHeight, 3f, 60f);
+            _matchOnStart = EditorGUILayout.Toggle(
+                new GUIContent("Off already at spawn", "Start the game with the helmet already off if the " +
+                                                       "astronaut spawns inside the zone. Normally left " +
+                                                       "off — you want to watch it come off, not find it " +
+                                                       "gone."),
+                _matchOnStart);
             EditorGUI.indentLevel--;
             EditorGUILayout.EndToggleGroup();
+
+            DrawSpawnCheck();
 
             EditorGUILayout.Space();
             using (new EditorGUI.DisabledScope(_astronaut == null))
@@ -158,6 +167,41 @@ namespace NasaSim.EditorTools
         GameObject Bucket(string label, string tooltip, GameObject value) =>
             (GameObject)EditorGUILayout.ObjectField(new GUIContent(label, tooltip), value,
                                                     typeof(GameObject), true);
+
+        /// <summary>
+        /// The one thing that silently ruins this feature: a zone that already contains the spawn point.
+        /// The helmet is then either off before you can look at it, or waiting for a boundary you are
+        /// standing on the wrong side of. So the window says which side of the line you start on, in
+        /// metres, rather than leaving you to press Play and guess.
+        /// </summary>
+        void DrawSpawnCheck()
+        {
+            var rig = FindRig();
+            if (rig == null || rig.pressurizedZone == null) return;
+
+            Vector3 spawn = (_astronaut != null ? _astronaut.transform.position
+                                                : rig.transform.position) + Vector3.up * 0.9f;
+            bool inside = rig.ZoneContains(spawn);
+
+            Vector3 local = rig.pressurizedZone.InverseTransformPoint(spawn);
+            Vector3 half = rig.zoneSize * 0.5f;
+            float slack = Mathf.Min(Mathf.Min(half.x - Mathf.Abs(local.x), half.y - Mathf.Abs(local.y)),
+                                    half.z - Mathf.Abs(local.z));
+
+            if (inside)
+                EditorGUILayout.HelpBox(
+                    $"The astronaut spawns INSIDE the zone — {Mathf.Abs(slack):0.0} m in from the nearest " +
+                    $"wall of a {rig.zoneSize.x:0} × {rig.zoneSize.y:0} × {rig.zoneSize.z:0} m box.\n\n" +
+                    "You will start already sealed in, so nothing happens until you walk out and back in. " +
+                    "Either shrink the zone to the pressurized part only, or move the spawn outside it. " +
+                    "Press H any time to see the move regardless.",
+                    MessageType.Warning);
+            else
+                EditorGUILayout.HelpBox(
+                    $"The astronaut spawns outside the zone, {Mathf.Abs(slack):0.0} m from it. Walk in and " +
+                    "the helmet comes off.",
+                    MessageType.None);
+        }
 
         // ================================================================== find
 
@@ -260,6 +304,7 @@ namespace NasaSim.EditorTools
             rig.liftHeight = _liftHeight;
             rig.reachForIt = _reachForIt;
             rig.enableKey = _enableKey;
+            rig.matchZoneOnStart = _matchOnStart;
             rig.locomotion = locomotion;
             rig.hand = _astronaut.GetComponent<HandActionController>();
             if (StationBuild.TryRendererBounds(helmet.gameObject, out Bounds hb))
@@ -272,8 +317,15 @@ namespace NasaSim.EditorTools
             Debug.Log($"[Helmet] Built on '{_astronaut.name}'.\n" +
                       $"  Worn on: {(head != null ? head.name : "(nothing — assign a head bone)")}   ·   " +
                       $"carried at: {hold.name}\n" +
-                      $"  {(rig.pressurizedZone != null ? $"Comes off inside a {rig.zoneSize.x:0} × {rig.zoneSize.z:0} m zone at the biodome" : "No zone — H key only")}" +
+                      $"  {(rig.pressurizedZone != null ? $"Comes off inside a {rig.zoneSize.x:0} × {rig.zoneSize.y:0} × {rig.zoneSize.z:0} m zone" : "No zone — H key only")}" +
                       (_enableKey ? ", or press H anywhere." : ".") + "\n" +
+                      (rig.pressurizedZone != null
+                          ? "  Spawn point is " +
+                            (rig.ZoneContains(_astronaut.transform.position + Vector3.up * 0.9f)
+                                ? "INSIDE that zone, so you start sealed in and see nothing until you walk " +
+                                  "out and back — shrink the zone or move the spawn.\n"
+                                : "outside it, so walking in triggers the take-off.\n")
+                          : string.Empty) +
                       "  Scene view: blue sphere = worn, orange sphere = carried, the yellow arc is the " +
                       "path it takes. Use the Preview buttons to park it at either end and look." +
                       (eyeToBone > 0.15f
@@ -415,12 +467,24 @@ namespace NasaSim.EditorTools
 
             var zone = StationBuild.GeneratedRoot(ZoneName, clearChildren: false);
             Undo.RecordObject(zone.transform, "Build Helmet");
-            float height = Mathf.Min(_zoneHeight, Mathf.Max(3f, b.size.y));
+
+            // Take the area's real height and only then clamp — the old Min(slider, height) reduced a
+            // dome measured as a wide flat shell to a 3 m slab, which you could walk clean over.
+            float height = Mathf.Clamp(b.size.y, 3f, _zoneHeight);
             zone.transform.position = new Vector3(b.center.x, b.min.y + height * 0.5f, b.center.z);
             zone.transform.rotation = Quaternion.identity;
 
             rig.pressurizedZone = zone.transform;
             rig.zoneSize = new Vector3(b.size.x * _zoneShrink, height, b.size.z * _zoneShrink);
+
+            // A zone this big means the bucket caught the whole import rather than the pressurized part.
+            // Say so now: the symptom later is a helmet that is simply never on.
+            if (b.size.x > 120f || b.size.z > 120f)
+                Debug.LogWarning(
+                    $"[Helmet] The pressurized area '{_pressurizedArea.name}' measures " +
+                    $"{b.size.x:0} × {b.size.z:0} m — that is most of the map, not one building. The zone " +
+                    "will cover the spawn point and very likely everything else. Assign the biodome shell " +
+                    "itself (or an empty you size by hand) and build again.", _pressurizedArea);
         }
 
         // ================================================================== preview / teardown

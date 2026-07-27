@@ -41,7 +41,7 @@ without jumping → **C** for the free-fly camera to admire the finished flower 
 
 ## 1b. The station tools (`Tools ▸ NASA Sim ▸ Station ▸ …`)
 
-Four windows for the imported `SettingEnvo` station. Each one has **buckets you drop groups into**, a
+Windows for the imported `SettingEnvo` station. Each one has **buckets you drop groups into**, a
 **build button**, and — the point of them — **draws what it will do in the Scene view**, so you check
 the result by looking rather than by pressing Play. All are re-runnable and undoable.
 
@@ -49,9 +49,11 @@ the result by looking rather than by pressing Play. All are re-runnable and undo
 |---|---|---|
 | `Station ▸ Colliders & Stairs` | Collision for the labelled groups. **Fill from the scene** finds your own labels (the ones without a Maya `namespace:` prefix) and guesses a mode for each; check them, then Build | **Green wireframe** = ground you can walk on |
 | `Station ▸ Sittable Chairs` | Chair meshes → sit in them with **E**. Seat and stand-out points are draggable child objects | **Blue seated figure** = exactly where and how you'll sit, plus a ring where you get out |
+| `Station ▸ Hinged Doors` | Door meshes → swing open on **E**. Singles or two-leaf doubles; each gets a collider that travels with the panel and a prompt trigger that doesn't | **Orange outline** = shut, **green outline** = open, with the swept arc between them. Preview buttons swing them for real |
 | `Station ▸ Elevator` | Car + two-panel sliding door + call buttons + a ride zone that carries you | **Green box** = bottom stop, **cyan box** = top stop, rails and travel distance between them; dashed outlines where the door panels slide to. Preview buttons park the car at the top for real |
 | `Station ▸ Lighting` | The fix for "everything is dark" — see below | The Scene view is lit live; each lamp draws its reach |
 | `Station ▸ Helmet Off Inside` | A helmet that lifts off the head and gets tucked at the hip when you walk into pressurized air, and goes back on when you leave | **Blue sphere** = worn, **orange sphere** = carried, a **yellow arc** for the path between them, and the zone box that triggers it. Preview buttons park it at either end |
+| `Plants ▸ Colour The Produce` | Gives every crop species its own colour — see below | Nothing to preview: it changes the materials, so the Scene view *is* the result |
 
 **The four collider modes.** A station needs different collision in different places:
 
@@ -69,6 +71,19 @@ one of those words are left out of the sampling, so the surface passes *beneath*
 half-moon platform gets a floor without its desks, monitors and water purifiers becoming walkable
 furniture — and why handrails don't turn the stairs into a ramp over the banister.
 
+**Hinging an imported door.** A hinge is a *line*, not a pivot — which is why `Station ▸ Hinged Doors`
+exists instead of a checkbox. A Maya group's origin is wherever the modeller left it, usually the
+middle of the panel or the world origin, so rotating the panel about its own transform makes it
+pirouette through the wall. The tool measures the panel, lays the hinge down the vertical edge at one
+end, and rotates about *that*. **Flip hinge** moves it to the other edge, **Flip swing** sends it the
+other way, and you judge both from the outlines without pressing Play.
+
+Two things it handles that bite otherwise. The prompt trigger is centred **on the hinge line**, the one
+spot on a door that barely moves as it opens — anywhere else it swings away and takes "[E] Close the
+door" with it. And a door needs a collider *on the panel*: a walk surface baked under `StationColliders`
+or a solid-mesh collider covering the doorway stays exactly where it was while the door opens away from
+it, so you get an open door you still can't walk through. The build warns you by name when it finds one.
+
 **The helmet is a duplicate, on purpose.** The astronaut model is one skinned mesh with no separable
 helmet, so nothing can be "taken off" it. What comes off is a second object riding the head — your own
 helmet FBX if you have one (project asset or scene copy, either works), otherwise a placeholder visor
@@ -78,6 +93,24 @@ culled to nothing from within — which would defeat the entire point of watchin
 of you. It comes off on **crossing into** the zone (edge-triggered, so **H** still works anywhere
 without the zone arguing with you), the right arm reaches up for it using the same IK as the eat and
 pet flourishes, and turning back in the doorway mid-move reverses it rather than being ignored.
+
+**If it's already off when you press Play, the zone is too big.** A zone that contains the spawn point
+means you start sealed in, so there is no crossing to watch. The window now says which side of the line
+you begin on, in metres, and the build warns when the "pressurized area" bucket measures more than
+120 m across — that is the whole import, not one building. Assign the biodome shell itself, or an empty
+you size by hand. **Off already at spawn** stays unticked by default for the same reason. **H** shows
+the move any time regardless.
+
+**Why the crops all looked the same.** The imported set ships with a *single* material shared by nearly
+everything green: a carrot's root, a beetroot's root, a corn stalk and a tree's leaves are literally the
+same material, so no amount of editing it can pull them apart — and it can't be edited anyway, because
+materials embedded in an FBX are read-only sub-assets. `Plants ▸ Colour The Produce` recognises each
+plant by name and gives every species its own material per part (root / leaf / flower), each one
+**copied** from whatever the import assigned so shaders and texture maps survive and only the colour
+moves. The copies are ordinary `.mat` files in `Materials/Produce`, so you can open any of them and
+tune it by hand afterwards. **Count what matches** tells you what the names resolve to before you
+commit, and **Put the imported colours back** really does — a `ProduceTint` object records what every
+renderer had, by reference, so it survives renaming and reloading.
 
 **Why the scene was dark**, and what `Station ▸ Lighting` does about it: one directional light was
 lighting an entire moon base; the dome was **casting a shadow over its own contents** (a closed glass
@@ -95,7 +128,7 @@ second: those lift everything at once, where another lamp only lifts one room.
 |---|---|
 | WASD + mouse | Walk / look (first person) |
 | Shift | Run · **Space** jump (tap = low hop, hold = full float) |
-| **E** | Interact — doors, pick fruit, pat duck, **sit in a chair**, **call the elevator** (prompt appears within ~2 m) |
+| **E** | Interact — **swing a door open**, pick fruit, pat duck, **sit in a chair**, **call the elevator** (prompt appears within ~2 m) |
 | **E** (seated) | Stand up again |
 | **H** | Take the helmet off / put it back on (it also comes off by itself on walking inside) |
 | **C** | Toggle first-person ↔ free-fly camera |
@@ -262,6 +295,7 @@ Every sound moment already has an empty `AudioClip` slot — import a clip and d
 | Sound | Where the slot is |
 |---|---|
 | Door servo open/close | `Airlock/DOOR_Outer` + `DOOR_Inner` → **Simple Door → Open/Close Clip** |
+| Hinge creak / latch | each swinging door panel → **Hinged Door → Open/Close Clip** |
 | Pressurization hiss (looped) | `Airlock` → **Airlock Controller → Hiss Clip** |
 | Duck quack (on pat) | each `Duck_XX` → **Water Wanderer → Quack Clip** |
 | Bite crunch | `Astronaut` → **Hand Action Controller → Bite Clip**, or per-object on **Eatable Object → Bite Clip** |

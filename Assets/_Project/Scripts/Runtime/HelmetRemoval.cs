@@ -48,8 +48,10 @@ namespace NasaSim
                  "empty to work the helmet by hand only.")]
         public Transform pressurizedZone;
         public Vector3 zoneSize = new Vector3(44f, 14f, 44f);
-        [Tooltip("If the astronaut starts inside the zone, begin with the helmet already off.")]
-        public bool matchZoneOnStart = true;
+        [Tooltip("Start with the helmet already off when the astronaut spawns inside the zone. Off by " +
+                 "default: a spawn point that happens to fall inside the zone would otherwise skip the " +
+                 "take-off entirely — you press Play and the helmet is simply gone.")]
+        public bool matchZoneOnStart;
 
         [Header("Motion (real seconds, immune to sim fast-forward)")]
         [Min(0.1f)] public float takeOffSeconds = 1.5f;
@@ -109,6 +111,9 @@ namespace NasaSim
 
         void Start()
         {
+            // Seed the edge detector with where we actually are, so spawning inside the zone is not read
+            // as a crossing. The helmet still starts ON unless matchZoneOnStart says otherwise: the first
+            // time you cross the boundary in either direction you get the full move, which is the point.
             _wasInside = ZoneContains(Probe);
             if (matchZoneOnStart && _wasInside) SetImmediate(off: true);
             else ApplyPose();
