@@ -51,6 +51,7 @@ the result by looking rather than by pressing Play. All are re-runnable and undo
 | `Station ▸ Sittable Chairs` | Chair meshes → sit in them with **E**. Seat and stand-out points are draggable child objects | **Blue seated figure** = exactly where and how you'll sit, plus a ring where you get out |
 | `Station ▸ Elevator` | Car + two-panel sliding door + call buttons + a ride zone that carries you | **Green box** = bottom stop, **cyan box** = top stop, rails and travel distance between them; dashed outlines where the door panels slide to. Preview buttons park the car at the top for real |
 | `Station ▸ Lighting` | The fix for "everything is dark" — see below | The Scene view is lit live; each lamp draws its reach |
+| `Station ▸ Helmet Off Inside` | A helmet that lifts off the head and gets tucked at the hip when you walk into pressurized air, and goes back on when you leave | **Blue sphere** = worn, **orange sphere** = carried, a **yellow arc** for the path between them, and the zone box that triggers it. Preview buttons park it at either end |
 
 **The four collider modes.** A station needs different collision in different places:
 
@@ -67,6 +68,16 @@ the result by looking rather than by pressing Play. All are re-runnable and undo
 one of those words are left out of the sampling, so the surface passes *beneath* them. It is why the
 half-moon platform gets a floor without its desks, monitors and water purifiers becoming walkable
 furniture — and why handrails don't turn the stairs into a ramp over the banister.
+
+**The helmet is a duplicate, on purpose.** The astronaut model is one skinned mesh with no separable
+helmet, so nothing can be "taken off" it. What comes off is a second object riding the head — your own
+helmet FBX if you have one (project asset or scene copy, either works), otherwise a placeholder visor
+you can swap later like any other `PH_`. That placeholder is deliberately **transparent and
+double-sided**: in first person the camera sits *inside* it, and an opaque single-sided bubble would be
+culled to nothing from within — which would defeat the entire point of watching it lift away in front
+of you. It comes off on **crossing into** the zone (edge-triggered, so **H** still works anywhere
+without the zone arguing with you), the right arm reaches up for it using the same IK as the eat and
+pet flourishes, and turning back in the doorway mid-move reverses it rather than being ignored.
 
 **Why the scene was dark**, and what `Station ▸ Lighting` does about it: one directional light was
 lighting an entire moon base; the dome was **casting a shadow over its own contents** (a closed glass
@@ -86,6 +97,7 @@ second: those lift everything at once, where another lamp only lifts one room.
 | Shift | Run · **Space** jump (tap = low hop, hold = full float) |
 | **E** | Interact — doors, pick fruit, pat duck, **sit in a chair**, **call the elevator** (prompt appears within ~2 m) |
 | **E** (seated) | Stand up again |
+| **H** | Take the helmet off / put it back on (it also comes off by itself on walking inside) |
 | **C** | Toggle first-person ↔ free-fly camera |
 | Fly cam | WASD + mouse, **Space/Ctrl** up/down, **Shift** fast, **scroll** = fly speed (your "zoom") |
 | 1–5, [ ] | Sim speed 1–16× (tractor/flowers only — you, doors, gas, water, ducks stay real-time) |

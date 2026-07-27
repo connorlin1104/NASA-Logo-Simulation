@@ -25,6 +25,7 @@ namespace NasaSim
             Pond,
             SpiralStair,
             Balcony,
+            Helmet,
         }
 
         public Category category = Category.Generic;
