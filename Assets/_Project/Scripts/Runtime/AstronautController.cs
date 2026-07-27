@@ -124,6 +124,11 @@ namespace NasaSim
             float dt = Time.unscaledDeltaTime;   // see class summary
             if (dt <= 0f) return;
 
+            // A disabled CharacterController means something else owns the body this frame — sitting in a
+            // chair (AstronautSitting) or a Teleport mid-flight. Walking and gravity must stay out of it,
+            // or they would drag the astronaut off the seat.
+            if (_cc == null || !_cc.enabled) return;
+
             LandingImpact = 0f;
 
             Vector2 input = ReadMoveInput();

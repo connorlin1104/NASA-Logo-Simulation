@@ -70,6 +70,19 @@ namespace NasaSim
         float _defaultNearClip;
         ViewMode _appliedMode = (ViewMode)(-1);
 
+        /// <summary>
+        /// The look yaw in degrees. This — not the astronaut's transform — is the authority on which way
+        /// the body faces in first person: <see cref="UpdateFirstPerson"/> re-writes the body's rotation
+        /// from it every LateUpdate, so anything that wants to turn the astronaut (see
+        /// <see cref="AstronautSitting"/>, which swings you round to face a chair) has to set it HERE or
+        /// its rotation is undone the same frame.
+        /// </summary>
+        public float Yaw
+        {
+            get => _yaw;
+            set => _yaw = value;
+        }
+
         void Awake()
         {
             _cam = GetComponent<Camera>();

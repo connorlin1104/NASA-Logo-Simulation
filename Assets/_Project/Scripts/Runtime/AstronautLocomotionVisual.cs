@@ -39,6 +39,10 @@ namespace NasaSim
         public Transform rightForearm;
         public Transform leftLeg;
         public Transform rightLeg;
+        [Tooltip("Shins. Only the SIT POSE uses them (a knee has to bend or sitting reads as lying " +
+                 "back with the legs stuck out). Same auto-detection as every other bone.")]
+        public Transform leftLowerLeg;
+        public Transform rightLowerLeg;
         [Tooltip("Right wrist. Only the INTERACTION ARM uses it (to measure the forearm and find the " +
                  "palm). Auto-detected from a Humanoid avatar, then a 'hand'/'wrist' child of the " +
                  "forearm, then a name search; if nothing is found the forearm's mesh supplies the tip.")]
@@ -100,6 +104,19 @@ namespace NasaSim
         [Tooltip("How quickly the crouch recovers after landing.")]
         [Min(0.1f)] public float landingRecoverSpeed = 7f;
 
+        [Header("Sit pose (driven by AstronautSitting)")]
+        [Tooltip("0 = standing, 1 = fully folded into a chair. AstronautSitting eases this from 0 to 1 " +
+                 "as it walks the body into the seat; nothing else writes it.")]
+        [Range(0f, 1f)] public float sitBlend;
+        [Tooltip("How far the thighs swing FORWARD when seated. 90 is a right angle at the hip.")]
+        [Range(0f, 110f)] public float sitThighDeg = 76f;
+        [Tooltip("How far the shins fold back at the knee when seated.")]
+        [Range(0f, 120f)] public float sitKneeDeg = 82f;
+        [Tooltip("Small forward lift of the upper arms when seated, so they don't hang through the chair.")]
+        [Range(0f, 60f)] public float sitArmDeg = 14f;
+        [Tooltip("Forearm bend when seated — this is what drops the hands onto the lap.")]
+        [Range(0f, 120f)] public float sitElbowDeg = 48f;
+
         [Header("Interaction arm (eat / pet)")]
         [Tooltip("How far the elbow swings OUT to the side while the hand reaches for something. 0 drops " +
                  "it straight down behind the hand; higher values open the arm out so the forearm reads " +
@@ -125,6 +142,7 @@ namespace NasaSim
             public float fpSwingScale;   // amplitude multiplier applied only in first person
             public float airBiasDeg;     // forward tuck/lift applied only while airborne (jump pose; negative = forward)
             public float squashBiasDeg;  // extra bend applied only during a landing squash (legs)
+            public float sitBiasDeg;     // the seated pose; the only bias that SUPPRESSES the others
         }
 
         Swinger[] _swingers = new Swinger[0];
@@ -193,14 +211,18 @@ namespace NasaSim
             // Jump pose: arms rise and thighs tuck up-forward. As with the first-person bias, "forward"
             // about the swing axis is a NEGATIVE angle, and both sides share the same value so they move
             // together rather than counter-swinging. Legs also carry the landing knee-bend.
-            var list = new System.Collections.Generic.List<Swinger>(6);
-            //                bone,        sign, weight,        fpBiasDeg,            fpSwingScale,          airBiasDeg,               squashBiasDeg
-            AddSwinger(list, leftArm,      +1f, 1f,            -firstPersonArmLift,   firstPersonSwingScale, -jumpArmRaiseDeg,          0f);
-            AddSwinger(list, rightArm,     -1f, 1f,            -firstPersonArmLift,   firstPersonSwingScale, -jumpArmRaiseDeg,          0f);
-            AddSwinger(list, leftForearm,  +1f, forearmFollow, -firstPersonElbowBend, firstPersonSwingScale, -jumpArmRaiseDeg * 0.6f,   0f);
-            AddSwinger(list, rightForearm, -1f, forearmFollow, -firstPersonElbowBend, firstPersonSwingScale, -jumpArmRaiseDeg * 0.6f,   0f);
-            AddSwinger(list, leftLeg,      -1f, legWeight,      0f,                    1f,                    -jumpLegTuckDeg,          -landingKneeBendDeg);
-            AddSwinger(list, rightLeg,     +1f, legWeight,      0f,                    1f,                    -jumpLegTuckDeg,          -landingKneeBendDeg);
+            // The shins carry NO walk swing (weight 0) — they exist in this list purely so the sit pose
+            // has a knee to bend. Everything else is unchanged.
+            var list = new System.Collections.Generic.List<Swinger>(8);
+            //                bone,          sign, weight,        fpBiasDeg,            fpSwingScale,          airBiasDeg,               squashBiasDeg,        sitBiasDeg
+            AddSwinger(list, leftArm,        +1f, 1f,            -firstPersonArmLift,   firstPersonSwingScale, -jumpArmRaiseDeg,          0f,                  -sitArmDeg);
+            AddSwinger(list, rightArm,       -1f, 1f,            -firstPersonArmLift,   firstPersonSwingScale, -jumpArmRaiseDeg,          0f,                  -sitArmDeg);
+            AddSwinger(list, leftForearm,    +1f, forearmFollow, -firstPersonElbowBend, firstPersonSwingScale, -jumpArmRaiseDeg * 0.6f,   0f,                  -sitElbowDeg);
+            AddSwinger(list, rightForearm,   -1f, forearmFollow, -firstPersonElbowBend, firstPersonSwingScale, -jumpArmRaiseDeg * 0.6f,   0f,                  -sitElbowDeg);
+            AddSwinger(list, leftLeg,        -1f, legWeight,      0f,                    1f,                    -jumpLegTuckDeg,          -landingKneeBendDeg, -sitThighDeg);
+            AddSwinger(list, rightLeg,       +1f, legWeight,      0f,                    1f,                    -jumpLegTuckDeg,          -landingKneeBendDeg, -sitThighDeg);
+            AddSwinger(list, leftLowerLeg,   -1f, 0f,             0f,                    1f,                     0f,                       0f,                 +sitKneeDeg);
+            AddSwinger(list, rightLowerLeg,  +1f, 0f,             0f,                    1f,                     0f,                       0f,                 +sitKneeDeg);
             _swingers = list.ToArray();
 
             _squashRoot = ResolveVisualRoot();
@@ -208,7 +230,8 @@ namespace NasaSim
         }
 
         void AddSwinger(System.Collections.Generic.List<Swinger> list, Transform bone, float sign,
-                        float weight, float fpBiasDeg, float fpSwingScale, float airBiasDeg, float squashBiasDeg)
+                        float weight, float fpBiasDeg, float fpSwingScale, float airBiasDeg,
+                        float squashBiasDeg, float sitBiasDeg)
         {
             if (bone == null) return;
 
@@ -232,6 +255,7 @@ namespace NasaSim
                 fpSwingScale = fpSwingScale,
                 airBiasDeg = airBiasDeg,
                 squashBiasDeg = squashBiasDeg,
+                sitBiasDeg = sitBiasDeg,
             });
         }
 
@@ -246,15 +270,20 @@ namespace NasaSim
                 rightForearm = Pick(rightForearm, animator.GetBoneTransform(HumanBodyBones.RightLowerArm));
                 leftLeg      = Pick(leftLeg,      animator.GetBoneTransform(HumanBodyBones.LeftUpperLeg));
                 rightLeg     = Pick(rightLeg,     animator.GetBoneTransform(HumanBodyBones.RightUpperLeg));
+                leftLowerLeg  = Pick(leftLowerLeg,  animator.GetBoneTransform(HumanBodyBones.LeftLowerLeg));
+                rightLowerLeg = Pick(rightLowerLeg, animator.GetBoneTransform(HumanBodyBones.RightLowerLeg));
             }
 
-            // 2. Name search - for Generic rigs and hand-named Maya joints.
-            if (leftArm == null)      leftArm      = FindBone("arm_l_upper", "leftarm", "upperarm_l", "arm_l", "l_arm", "shoulder_l", "leftshoulder");
-            if (rightArm == null)     rightArm     = FindBone("arm_r_upper", "rightarm", "upperarm_r", "arm_r", "r_arm", "shoulder_r", "rightshoulder");
-            if (leftForearm == null)  leftForearm  = FindBone("arm_l_lower", "leftforearm", "lowerarm_l", "forearm_l", "elbow_l");
-            if (rightForearm == null) rightForearm = FindBone("arm_r_lower", "rightforearm", "lowerarm_r", "forearm_r", "elbow_r");
-            if (leftLeg == null)      leftLeg      = FindBone("leg_l_upper", "leftupleg", "thigh_l", "leg_l", "l_leg", "upperleg_l");
-            if (rightLeg == null)     rightLeg     = FindBone("leg_r_upper", "rightupleg", "thigh_r", "leg_r", "r_leg", "upperleg_r");
+            // 2. Name search - for Generic rigs and hand-named Maya joints. The bip001* spellings cover a
+            // 3ds Max Biped, which is what this project's astronaut was exported as.
+            if (leftArm == null)      leftArm      = FindBone("arm_l_upper", "leftarm", "upperarm_l", "arm_l", "l_arm", "shoulder_l", "leftshoulder", "bip001lupperarm");
+            if (rightArm == null)     rightArm     = FindBone("arm_r_upper", "rightarm", "upperarm_r", "arm_r", "r_arm", "shoulder_r", "rightshoulder", "bip001rupperarm");
+            if (leftForearm == null)  leftForearm  = FindBone("arm_l_lower", "leftforearm", "lowerarm_l", "forearm_l", "elbow_l", "bip001lforearm");
+            if (rightForearm == null) rightForearm = FindBone("arm_r_lower", "rightforearm", "lowerarm_r", "forearm_r", "elbow_r", "bip001rforearm");
+            if (leftLeg == null)      leftLeg      = FindBone("leg_l_upper", "leftupleg", "thigh_l", "leg_l", "l_leg", "upperleg_l", "bip001lthigh");
+            if (rightLeg == null)     rightLeg     = FindBone("leg_r_upper", "rightupleg", "thigh_r", "leg_r", "r_leg", "upperleg_r", "bip001rthigh");
+            if (leftLowerLeg == null)  leftLowerLeg  = FindBone("leg_l_lower", "leftleg", "calf_l", "l_calf", "shin_l", "lowerleg_l", "bip001lcalf");
+            if (rightLowerLeg == null) rightLowerLeg = FindBone("leg_r_lower", "rightleg", "calf_r", "r_calf", "shin_r", "lowerleg_r", "bip001rcalf");
 
             // 3. Whatever is left is whatever the Inspector already had (the primitive placeholder path).
         }
@@ -402,11 +431,16 @@ namespace NasaSim
             float speed = controller != null ? controller.CurrentSpeed : 0f;
             bool grounded = controller == null || controller.IsGrounded;
 
+            float sit = Mathf.Clamp01(sitBlend);
+            float notSit = 1f - sit;
+
             if (_useAnimator)
             {
                 if (_hasSpeedParam) animator.SetFloat(speedParameter, speed);
                 if (_hasMovingParam) animator.SetBool(movingParameter, speed > 0.05f);
                 if (_hasGroundedParam) animator.SetBool(groundedParameter, grounded);
+                // No walk clip has a "sitting" pose, so fold the limbs on top of whatever it produced.
+                if (sit > 0.001f) ApplySitOverClip(sit);
                 return;                // the interaction arm is layered on afterwards, see ApplyHandTargetNow
             }
 
@@ -417,8 +451,10 @@ namespace NasaSim
             _fpBlend = Mathf.Lerp(_fpBlend, firstPerson ? 1f : 0f, 1f - Mathf.Exp(-firstPersonBlendSpeed * dt));
             _groundBlend = Mathf.Lerp(_groundBlend, grounded ? 1f : 0f, 1f - Mathf.Exp(-8f * dt));
 
-            // Jump pose eases in while airborne (tuck legs, raise arms) and out on landing.
-            float airTarget = (jumpPose && !grounded) ? 1f : 0f;
+            // Jump pose eases in while airborne (tuck legs, raise arms) and out on landing. Seated, the
+            // CharacterController is switched off — which reads as "not grounded" — so the sit blend has
+            // to veto the jump pose or the astronaut would tuck its legs up the moment it sat down.
+            float airTarget = (jumpPose && !grounded && sit < 0.5f) ? 1f : 0f;
             _airPose = Mathf.Lerp(_airPose, airTarget, 1f - Mathf.Exp(-jumpPoseBlendSpeed * dt));
 
             // Landing squash: snap up on the touchdown impact, then ease back to standing.
@@ -440,24 +476,70 @@ namespace NasaSim
 
             // The walk swing settles in the air (a floaty lunar hop reads as a still, tucked body, not a
             // mid-swing freeze); the jump pose above supplies the airborne shape instead.
-            float swing = Mathf.Sin(_phase) * armSwingDeg * _amplitude * _groundBlend;
+            float swing = Mathf.Sin(_phase) * armSwingDeg * _amplitude * _groundBlend * notSit;
 
             for (int i = 0; i < _swingers.Length; i++)
             {
                 var s = _swingers[i];
                 if (s.bone == null) continue;
                 float ampScale = 1f + (s.fpSwingScale - 1f) * _fpBlend;
+                // Every walking bias fades out as the sit blend comes in, so the two poses cross-fade
+                // instead of adding up into a seated astronaut still swinging its arms.
                 float angle = swing * s.sign * s.weight * ampScale
-                            + s.fpBiasDeg * _fpBlend
-                            + s.airBiasDeg * _airPose
-                            + s.squashBiasDeg * _squash;
+                            + (s.fpBiasDeg * _fpBlend
+                             + s.airBiasDeg * _airPose
+                             + s.squashBiasDeg * _squash) * notSit
+                            + s.sitBiasDeg * sit;
                 // Pre-multiply: apply the swing in the PARENT's space, on top of the captured rest pose.
                 s.bone.localRotation = Quaternion.AngleAxis(angle, s.axis) * s.rest;
             }
 
             // Dip the model root (never the controller root) for the landing crouch.
             if (_squashRoot != null)
-                _squashRoot.localPosition = _restSquashRootPos + Vector3.down * (_squash * landingSquashDepth);
+                _squashRoot.localPosition =
+                    _restSquashRootPos + Vector3.down * (_squash * landingSquashDepth * notSit);
+        }
+
+        /// <summary>
+        /// The seated pose applied as a RELATIVE bend on top of an Animator clip's output — the swingers'
+        /// captured rest poses are meaningless on that path, since the clip rewrites the bones every
+        /// frame. Called from LateUpdate, after the Animator has run.
+        /// </summary>
+        void ApplySitOverClip(float sit)
+        {
+            BendOverClip(leftArm, -sitArmDeg * sit);
+            BendOverClip(rightArm, -sitArmDeg * sit);
+            BendOverClip(leftForearm, -sitElbowDeg * sit);
+            BendOverClip(rightForearm, -sitElbowDeg * sit);
+            BendOverClip(leftLeg, -sitThighDeg * sit);
+            BendOverClip(rightLeg, -sitThighDeg * sit);
+            BendOverClip(leftLowerLeg, sitKneeDeg * sit);
+            BendOverClip(rightLowerLeg, sitKneeDeg * sit);
+        }
+
+        void BendOverClip(Transform bone, float degrees)
+        {
+            if (bone == null || Mathf.Abs(degrees) < 0.01f) return;
+            Vector3 axis = bone.parent != null
+                ? bone.parent.InverseTransformDirection(transform.right)
+                : Vector3.right;
+            if (axis.sqrMagnitude < 1e-6f) axis = Vector3.right;
+            bone.localRotation = Quaternion.AngleAxis(degrees, axis.normalized) * bone.localRotation;
+        }
+
+        /// <summary>
+        /// Height of the hip joint above the astronaut's feet, in world metres, measured off the live rig.
+        /// <see cref="AstronautSitting"/> drops the body by exactly this much to land the hips on a seat,
+        /// so a model imported at any scale seats itself correctly.
+        /// </summary>
+        public float HipHeightAboveRoot
+        {
+            get
+            {
+                Transform hip = leftLeg != null ? leftLeg : rightLeg;
+                if (hip == null) return 0.9f;
+                return Mathf.Max(0.05f, hip.position.y - transform.position.y);
+            }
         }
 
         // ---------------------------------------------------------------- interaction arm

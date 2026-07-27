@@ -39,13 +39,53 @@ without jumping → **C** for the free-fly camera to admire the finished flower 
 | 14 | **Manual:** select your ground model → `Environment ▸ Bake Simplified Collider` | Walkable collider baked from the uneven outside terrain (your visual ground stays untouched) |
 | 15 | **Manual:** select each spiral staircase → `Biodome ▸ Add Spiral Stair Ramp` | Set Turns/Clockwise/Start Angle until the green wireframe hugs the treads, Build. "Disable tread colliders" stays ON — the smooth helicoid replaces the snaggy per-tread colliders. Settings are remembered per staircase. |
 
+## 1b. The station tools (`Tools ▸ NASA Sim ▸ Station ▸ …`)
+
+Four windows for the imported `SettingEnvo` station. Each one has **buckets you drop groups into**, a
+**build button**, and — the point of them — **draws what it will do in the Scene view**, so you check
+the result by looking rather than by pressing Play. All are re-runnable and undoable.
+
+| Window | What it does | What you see before Play |
+|---|---|---|
+| `Station ▸ Colliders & Stairs` | Collision for the labelled groups. **Fill from the scene** finds your own labels (the ones without a Maya `namespace:` prefix) and guesses a mode for each; check them, then Build | **Green wireframe** = ground you can walk on |
+| `Station ▸ Sittable Chairs` | Chair meshes → sit in them with **E**. Seat and stand-out points are draggable child objects | **Blue seated figure** = exactly where and how you'll sit, plus a ring where you get out |
+| `Station ▸ Elevator` | Car + two-panel sliding door + call buttons + a ride zone that carries you | **Green box** = bottom stop, **cyan box** = top stop, rails and travel distance between them; dashed outlines where the door panels slide to. Preview buttons park the car at the top for real |
+| `Station ▸ Lighting` | The fix for "everything is dark" — see below | The Scene view is lit live; each lamp draws its reach |
+
+**The four collider modes.** A station needs different collision in different places:
+
+- **Walk surface** — *stairs and decks.* Samples the group from above and eases the tread profile into
+  one smooth ramp. This is the fix for having to jump up your own staircase: a `CharacterController`
+  refuses ledges taller than its Step Offset and slopes past its Slope Limit, so modelled steps read
+  to it as a wall. It follows the model's own footprint, so a straight flight, the half-moon sweeps
+  and a spiral all work the same way. Baked meshes land under a `StationColliders` root.
+- **Solid mesh** — *the tube and the hatches.* An exact MeshCollider per part.
+- **Box per part** — *handrails.* Fifty posts get fifty cheap boxes, not fifty mesh colliders.
+- **Box hull** — one box round the lot.
+
+**"Don't stand on"** (in Walk surface tuning) is the knob that matters most. Parts whose name contains
+one of those words are left out of the sampling, so the surface passes *beneath* them. It is why the
+half-moon platform gets a floor without its desks, monitors and water purifiers becoming walkable
+furniture — and why handrails don't turn the stairs into a ramp over the banister.
+
+**Why the scene was dark**, and what `Station ▸ Lighting` does about it: one directional light was
+lighting an entire moon base; the dome was **casting a shadow over its own contents** (a closed glass
+shell with shadow casting on is a very expensive lampshade); and with no baked GI nothing bounces, so
+every surface facing away from the sun got exactly the ambient colour. The tool brightens the sun,
+adds a shadowless fill light from the opposite side, raises ambient to a gradient, switches shadow
+*casting* (not rendering) off on the shell, hangs point lights over the groups you list, and raises
+URP's per-object light cap from 4 — which is what otherwise makes objects mysteriously ignore a lamp
+right next to them. If it's still dark, raise **Ambient brightness** first and **Fill intensity**
+second: those lift everything at once, where another lamp only lifts one room.
+
 ## 2. Controls
 
 | Key | Action |
 |---|---|
 | WASD + mouse | Walk / look (first person) |
 | Shift | Run · **Space** jump (tap = low hop, hold = full float) |
-| **E** | Interact — doors, pick fruit, pat duck (prompt appears within ~2 m) |
+| **E** | Interact — doors, pick fruit, pat duck, **sit in a chair**, **call the elevator** (prompt appears within ~2 m) |
+| **E** (seated) | Stand up again |
 | **C** | Toggle first-person ↔ free-fly camera |
 | Fly cam | WASD + mouse, **Space/Ctrl** up/down, **Shift** fast, **scroll** = fly speed (your "zoom") |
 | 1–5, [ ] | Sim speed 1–16× (tractor/flowers only — you, doors, gas, water, ducks stay real-time) |
@@ -56,8 +96,19 @@ without jumping → **C** for the free-fly camera to admire the finished flower 
 `SimulationManager` drives `Time.timeScale` up to 16×. **Scaled** (fast-forwards): tractor, wheel
 spin, the cut itself, clippings, flower ballistics. **Unscaled** (always real seconds):
 astronaut, cameras, doors, airlock + gas particles, interactions, fruit sequence, ducks/fish, water
-animation (script-fed `_WaterTime`), grass wind and the push-aside (script-fed `_NasaGrassTime`).
+animation (script-fed `_WaterTime`), grass wind and the push-aside (script-fed `_NasaGrassTime`),
+sitting down, the sliding doors and the elevator.
 New ambience the player watches → unscaled; new mow-spectacle → scaled.
+
+Two related rules the station scripts rely on:
+
+- **A disabled `CharacterController` means someone else owns the body.** `AstronautController` skips
+  its entire update in that case, which is how `AstronautSitting` can hold the astronaut in a chair
+  without gravity dragging them out of it. Anything else that wants to move the body directly should
+  switch the controller off the same way, and hand it back with `Teleport`.
+- **A `CharacterController` is never pushed by a moving collider.** Stand in a rising lift and Unity
+  will leave you in mid-air while the floor climbs past. `ElevatorController` therefore moves riders
+  by the same delta the car just travelled — anything else that moves a platform must do likewise.
 
 ## 3b. The grass
 
