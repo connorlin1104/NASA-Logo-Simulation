@@ -62,9 +62,9 @@ namespace NasaSim
 
         [Header("Flowers — where they land")]
         [Tooltip("Metres of pen-down travel between flower bursts — the density dial. The shipped logo " +
-                 "is ~573 m of line, so 0.4 m is ~1,430 bursts and ~1,930 flowers on the ground at the " +
+                 "is ~573 m of line, so 0.2 m is ~2,865 bursts and ~3,860 flowers on the ground at the " +
                  "end of a run. Raise it for a sparser, dottier logo; lower it for a denser one.")]
-        [Min(0.1f)] public float flowerSpacing = 0.4f;
+        [Min(0.1f)] public float flowerSpacing = 0.2f;
         public Vector2Int flowersPerBurst = new Vector2Int(1, 2);
         [Tooltip("How far BEHIND the deck a flower lands, measured back along the line just cut (m). " +
                  "Small values keep the band tight to the tractor; the path is followed exactly either way.")]
@@ -84,9 +84,10 @@ namespace NasaSim
         [Tooltip("Hard cap on live flowers; when it is reached the oldest LANDED flower is recycled.\n\n" +
                  "0 (the default) sizes the pool from the logo itself — mown length ÷ Flower Spacing × the " +
                  "TOP of Flowers Per Burst — so a full mow never recycles anything and the finished field " +
-                 "is the whole logo. The shipped logo is ~573 m of line: 1,430 bursts, a ceiling of " +
-                 "~2,880, against ~1,930 flowers actually thrown (the 42 star dots are silenced, so their " +
-                 "~59 m throws nothing). Set a number here only to force a lower ceiling.")]
+                 "is the whole logo. The shipped logo is ~573 m of line: 2,865 bursts, a ceiling of " +
+                 "~5,750, against ~3,860 flowers actually thrown (the 42 star dots are silenced, so their " +
+                 "~59 m throws nothing) — comfortably under the 8,000 the estimate is clamped to. Set a " +
+                 "number here only to force a lower ceiling.")]
         [Min(0)] public int flowerPoolLimit = 0;
         [Tooltip("For the ejection direction before any line history exists. Auto-found from the follower.")]
         public Transform tractor;
