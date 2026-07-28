@@ -160,6 +160,40 @@ namespace NasaSim
             return ClampInside(ToWorld(p, SurfaceY), margin);
         }
 
+        /// <summary>
+        /// A random point on the surface within <paramref name="range"/> metres of <paramref name="world"/>.
+        ///
+        /// Wildlife wanders with this rather than <see cref="RandomPointOnSurface"/>, because in a ring the
+        /// two are not the same question: "anywhere in the moat" is usually a spot on the far side of a dry
+        /// square that nothing can swim across, while "somewhere near me" is always somewhere reachable.
+        /// </summary>
+        public Vector3 RandomPointNear(Vector3 world, float range, float margin = 0.5f)
+        {
+            if (range <= 0f) return RandomPointOnSurface(margin);
+
+            Vector2 c = ToLocal(world);
+            float r = range / HorizontalScale;
+            float m = LocalMargin(margin);
+            for (int i = 0; i < 48; i++)
+            {
+                Vector2 p = c + Random.insideUnitCircle * r;
+                if (ContainsLocal(p, m)) return ToWorld(p, SurfaceY);
+            }
+            return RandomPointOnSurface(margin);   // wedged somewhere odd: fall back to the whole body
+        }
+
+        /// <summary>
+        /// How much open water there is at a world point: metres to the nearest bank, negative on land.
+        /// This is what lets wildlife look before it swims, instead of being clamped after it has.
+        /// </summary>
+        public float ClearanceAt(Vector3 world)
+        {
+            Vector2 p = ToLocal(world);
+            float d = SignedDistance(p, false);                       // inside the outer outline...
+            if (IsRing) d = Mathf.Max(d, -SignedDistance(p, true));   // ...and outside the dry middle
+            return -d * HorizontalScale;
+        }
+
         /// <summary>Pull a world position back into the water horizontally (its Y is left alone).</summary>
         public Vector3 ClampInside(Vector3 world, float margin = 0.5f)
         {

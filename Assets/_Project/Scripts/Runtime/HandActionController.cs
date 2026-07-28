@@ -47,9 +47,9 @@ namespace NasaSim
         [Range(0f, 1f)] public float pitchFollow = 0.6f;
 
         [Header("Eat timing (real seconds)")]
-        [Min(0.05f)] public float reachSeconds = 0.38f;
-        [Min(0.05f)] public float bringSeconds = 0.45f;
-        [Min(0.05f)] public float settleSeconds = 0.4f;
+        [Min(0.05f)] public float reachSeconds = 0.22f;
+        [Min(0.05f)] public float bringSeconds = 0.24f;
+        [Min(0.05f)] public float settleSeconds = 0.28f;
         [Tooltip("How much of its own size an object keeps once it is in the hand.")]
         [Range(0.4f, 1f)] public float carryScale = 0.9f;
         [Tooltip("How long each bite's shrink takes to snap into place.")]
@@ -61,8 +61,9 @@ namespace NasaSim
         [Range(0f, 0.3f)] public float pluckLoad = 0.07f;
         [Tooltip("How far past the snack the hand carries on at the moment it lets go.")]
         [Range(0f, 0.4f)] public float pluckSnap = 0.12f;
-        [Tooltip("Degrees a second the snack turns while it is held up to be looked at.")]
-        public float inspectSpinDegPerSec = 66f;
+        [Tooltip("Degrees a second the snack turns while it is held up to be looked at. Brisk, because the " +
+                 "look is brief — turned slowly it would read as the hand stalling rather than showing it.")]
+        public float inspectSpinDegPerSec = 130f;
         [Tooltip("How far toward the visor it is brought for that look. 0 is the normal carry pose, " +
                  "1 is right up against the lens.")]
         [Range(0f, 1f)] public float inspectCloseness = 0.35f;
@@ -256,7 +257,7 @@ namespace NasaSim
             const float Load = 0.34f;   // done leaning in on it
             const float Free = 0.60f;   // it lets go here
 
-            float seconds = _food != null ? _food.pluckSeconds : 0.6f;
+            float seconds = _food != null ? _food.pluckSeconds : 0.3f;
             _t += dt / Mathf.Max(0.05f, seconds);
             float k = Mathf.Clamp01(_t);
 

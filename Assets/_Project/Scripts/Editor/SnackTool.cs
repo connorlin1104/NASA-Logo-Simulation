@@ -45,7 +45,7 @@ namespace NasaSim.EditorTools
         float _soilLift = 0.05f;
         float _reach = 1.0f;
         float _respawnSeconds = 25f;
-        float _inspectSeconds = 1.3f;
+        float _inspectSeconds = 0.4f;
         bool _onlyThese = true;
         bool _rebuildMeshes = true;
 
@@ -203,7 +203,8 @@ namespace NasaSim.EditorTools
                                "is a small thing to walk into."), _reach, 0.3f, 3f);
             _inspectSeconds = EditorGUILayout.Slider(
                 new GUIContent("Hold it up for (s)", "After the pull and before the first bite it is held " +
-                               "near the visor, turning. This is the shot."), _inspectSeconds, 0f, 4f);
+                               "near the visor, turning. A glance, not a display — long enough to see what was " +
+                               "picked, short enough not to hold the player up."), _inspectSeconds, 0f, 4f);
             _respawnSeconds = EditorGUILayout.Slider(
                 new GUIContent("Grows back after (s)", "Real seconds. Enough to reset between takes " +
                                "without reloading the scene."), _respawnSeconds, 3f, 180f);
@@ -507,7 +508,7 @@ namespace NasaSim.EditorTools
                     // finishes the pull with the tip still in the ground.
                     eat.pluckDirection = Vector3.up;
                     eat.pluckDistance = _carrotLength * 1.15f;
-                    eat.pluckSeconds = 0.78f;      // the one that should look like it takes effort
+                    eat.pluckSeconds = 0.42f;      // the one that should look like it takes effort
                     eat.debrisColor = new Color(0.93f, 0.50f, 0.13f, 1f);
                     eat.pluckDebrisColor = new Color(0.32f, 0.24f, 0.16f, 1f);   // soil
                     break;
@@ -516,7 +517,7 @@ namespace NasaSim.EditorTools
                     eat.biteInterval = 0.5f;
                     eat.pluckDirection = Vector3.up;
                     eat.pluckDistance = 0.07f;     // it only has to twist off its stump
-                    eat.pluckSeconds = 0.58f;
+                    eat.pluckSeconds = 0.32f;
                     eat.debrisColor = new Color(0.44f, 0.68f, 0.25f, 1f);
                     eat.pluckDebrisColor = new Color(0.36f, 0.55f, 0.20f, 1f);   // torn leaf
                     break;
@@ -526,7 +527,7 @@ namespace NasaSim.EditorTools
                     // Down: an apple is picked by pulling it off the branch above it.
                     eat.pluckDirection = Vector3.down;
                     eat.pluckDistance = 0.055f;
-                    eat.pluckSeconds = 0.5f;
+                    eat.pluckSeconds = 0.28f;
                     eat.debrisColor = new Color(0.97f, 0.93f, 0.80f, 1f);        // white flesh
                     eat.pluckDebrisColor = new Color(0.42f, 0.55f, 0.20f, 1f);   // leaf
                     break;

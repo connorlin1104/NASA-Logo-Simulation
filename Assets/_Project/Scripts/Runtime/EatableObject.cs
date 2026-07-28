@@ -61,10 +61,11 @@ namespace NasaSim
         [Tooltip("How far it travels breaking free, in metres. For a carrot this is how much of it was " +
                  "buried, so the whole root clears the soil.")]
         [Min(0f)] public float pluckDistance = 0.14f;
-        [Min(0.05f)] public float pluckSeconds = 0.62f;
-        [Tooltip("Held up and slowly turned before the first bite. This is the shot — set it to 0 to go " +
-                 "straight to eating.")]
-        [Min(0f)] public float inspectSeconds = 1.3f;
+        [Min(0.05f)] public float pluckSeconds = 0.32f;
+        [Tooltip("Held up and turned before the first bite. A glance, not a display: long enough to see " +
+                 "what was picked, short enough that it does not hold the player up. 0 goes straight to " +
+                 "eating.")]
+        [Min(0f)] public float inspectSeconds = 0.4f;
         [Tooltip("Colour of the puff thrown out as it comes free: soil for a root, leaf litter for a " +
                  "stem. Alpha 0 falls back to the crumb colour.")]
         public Color pluckDebrisColor = new Color(0f, 0f, 0f, 0f);
