@@ -87,11 +87,74 @@ namespace NasaSim.EditorTools
             w.Rescan();
         }
 
+        /// <summary>
+        /// Pick the pond, and never a fountain by accident.
+        ///
+        /// This used to end with FindAnyObjectByType&lt;WaterBody&gt;(), which returns whichever one Unity
+        /// happens to hand over — and a fountain is a WaterBody. That is how three ducks and eight fish
+        /// ended up in a stone basin two metres across, permanently pinned against the rim by
+        /// <see cref="WaterBody.ClampInside"/>. An explicit selection is still honoured, fountain or not;
+        /// it is only the guess that is now made carefully, by area.
+        /// </summary>
         void AutoTarget()
         {
             if (Selection.activeGameObject != null)
                 _target = Selection.activeGameObject.GetComponentInParent<WaterBody>();
-            if (_target == null) _target = FindAnyObjectByType<WaterBody>();
+            if (_target != null) return;
+
+            WaterBody best = null;
+            float bestArea = 0f;
+            foreach (WaterBody b in FindObjectsByType<WaterBody>(FindObjectsInactive.Include))
+            {
+                if (b == null || IsFountain(b)) continue;
+                float area = SurfaceArea(b);
+                if (area > bestArea) { bestArea = area; best = b; }
+            }
+            _target = best;
+        }
+
+        static bool IsFountain(WaterBody b) => b.GetComponent<Fountain>() != null;
+
+        /// <summary>Rough footprint in square metres. Enough to compare a moat against a basin.</summary>
+        static float SurfaceArea(WaterBody b)
+        {
+            Vector2 half = b.OuterHalf;
+            return Mathf.Abs(half.x * half.y) * 4f;
+        }
+
+        /// <summary>
+        /// How many animals this much water can hold before they are standing on each other. Deliberately
+        /// generous — it is a guard against absurdity, not a stocking density.
+        /// </summary>
+        static int Capacity(WaterBody b) => Mathf.Max(0, Mathf.FloorToInt(SurfaceArea(b) / 6f));
+
+        [MenuItem("Tools/NASA Sim/Water/Take The Wildlife Out Of The Fountains")]
+        public static void ClearFountains()
+        {
+            int removed = 0, ponds = 0;
+            Undo.SetCurrentGroupName("Empty The Fountains");
+            int group = Undo.GetCurrentGroup();
+
+            foreach (WaterBody b in FindObjectsByType<WaterBody>(FindObjectsInactive.Include))
+            {
+                if (b == null || !IsFountain(b)) continue;
+                bool any = false;
+                for (int i = b.transform.childCount - 1; i >= 0; i--)
+                {
+                    Transform c = b.transform.GetChild(i);
+                    if (c.GetComponent<WaterWanderer>() == null) continue;
+                    Undo.DestroyObjectImmediate(c.gameObject);
+                    removed++;
+                    any = true;
+                }
+                if (any) ponds++;
+            }
+
+            Undo.CollapseUndoOperations(group);
+            EditorSceneManager.MarkSceneDirty(UnityEngine.SceneManagement.SceneManager.GetActiveScene());
+            Debug.Log($"[Wildlife] {removed} animal(s) taken out of {ponds} fountain(s). A fountain basin " +
+                      "is a couple of metres across — anything swimming in it spends its whole life " +
+                      "clamped against the rim. The moat is untouched.");
         }
 
         void OnGUI()
@@ -361,6 +424,27 @@ namespace NasaSim.EditorTools
                                  bool rebuildAll = false)
         {
             if (water == null) return;
+
+            // A fountain basin is about two metres across. Asking for three ducks and eight fish in one
+            // does not give you a busy pond, it gives you eleven animals wedged against the rim, and every
+            // caller that builds a WaterBody routes through here — so the ceiling belongs here rather than
+            // in each of them.
+            int room = Capacity(water);
+            int asked = ducks + fish + lilypads;
+            if (asked > room)
+            {
+                float k = room / (float)Mathf.Max(1, asked);
+                int wasD = ducks, wasF = fish, wasL = lilypads;
+                ducks = Mathf.FloorToInt(ducks * k);
+                fish = Mathf.FloorToInt(fish * k);
+                lilypads = Mathf.FloorToInt(lilypads * k);
+                if (!quiet)
+                    Debug.LogWarning(
+                        $"[Wildlife] '{water.name}' is only about {SurfaceArea(water):0} m² of water — room " +
+                        $"for roughly {room}. Asked for {wasD}+{wasF}+{wasL}; stocking " +
+                        $"{ducks}+{fish}+{lilypads} instead so nothing spends its life against the bank.",
+                        water);
+            }
 
             int adopted = 0;
             if (adopt)
@@ -827,6 +911,10 @@ namespace NasaSim.EditorTools
             // wiring (which water, which mode) is always refreshed, because that is what can go stale.
             WaterWanderer wander = GetOrAdd<WaterWanderer>(root, out bool freshWander);
             wander.water = water;
+            // Stamped every time, unlike the tuned numbers below. Which way a model faces is a fact about
+            // the asset, not a preference somebody arrived at — and when it is wrong, every animal of that
+            // kind is wrong in the same way and wants correcting together.
+            wander.modelYaw = ModelYawFor(kind);
             switch (kind)
             {
                 case Kind.Duck:
@@ -915,6 +1003,24 @@ namespace NasaSim.EditorTools
         }
 
         // ------------------------------------------------------------------ helpers
+
+        /// <summary>
+        /// How far to turn each model so its nose points the way it swims. <see cref="WaterWanderer"/>
+        /// steers along +Z; this says where the model's own nose actually is.
+        ///
+        /// <b>90 for everything, and that is an observed fact rather than a derived one.</b> The geometry
+        /// argues for two different values: Duck.fbx is modelled facing +X (chest +1.05, rump −1.05, tail
+        /// −2.05, bill +2.42) and Fish.fbx facing −X (eyes at the low-X end, caudal fin at the high-X end),
+        /// with identical axis settings in both files and no node rotations to reconcile them — so passing
+        /// both through the same import should leave them pointing opposite ways.
+        ///
+        /// In the running game they do not. The duck is right at 90 and so is the fish, which means the
+        /// reading of one of those two models is wrong somewhere between the FBX and the screen. Rather
+        /// than encode a derivation that is demonstrably not what happens, this encodes what does.
+        ///
+        /// Lilypads are near enough round for it not to matter.
+        /// </summary>
+        static float ModelYawFor(Kind kind) => 90f;
 
         static string Prefix(Kind kind) => kind + "_";
 

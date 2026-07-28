@@ -40,13 +40,102 @@ namespace NasaSim.EditorTools
         Transform _anchor;
         float _carrotLength = 0.165f;
         float _lettuceWidth = 0.150f;
-        float _appleWidth = 0.082f;
+        float _appleWidth = 0.115f;
         float _appleHeight = 1.30f;
+        float _soilLift = 0.05f;
         float _reach = 1.0f;
         float _respawnSeconds = 25f;
         float _inspectSeconds = 1.3f;
         bool _onlyThese = true;
         bool _rebuildMeshes = true;
+
+        /// <summary>
+        /// Why E does nothing, answered in one click.
+        ///
+        /// Eating needs six things to line up at once — the object exists, it is active, it has an
+        /// EatableObject, it has an enabled trigger on the Interactable layer, that trigger is inside the
+        /// sensor's sphere, and the sensor's mask includes the layer. Any one of them missing produces the
+        /// same symptom: you stand there pressing E and nothing happens. Checking them by hand across two
+        /// Inspectors is miserable, so this prints all six per snack, with the actual numbers.
+        /// </summary>
+        [MenuItem("Tools/NASA Sim/Interactables/Why Can't I Eat It?")]
+        public static void Diagnose()
+        {
+            var sb = new StringBuilder("[Snacks] Why can't I eat it?\n");
+
+            var sensor = Object.FindAnyObjectByType<InteractionSensor>();
+            Vector3 eye = Vector3.zero;
+            float reach = 0f;
+            if (sensor == null) sb.AppendLine("  NO InteractionSensor in the scene — nothing can be eaten at all.");
+            else
+            {
+                Transform o = sensor.origin != null ? sensor.origin : sensor.transform;
+                eye = o.position;
+                reach = sensor.radius;
+                bool maskOk = (sensor.interactableMask.value & (1 << NasaLayers.Interactable)) != 0;
+                sb.AppendLine($"  Sensor on '{sensor.name}', measuring from '{o.name}' at " +
+                              $"({eye.x:0.0}, {eye.y:0.0}, {eye.z:0.0}), radius {reach:0.00} m.");
+                sb.AppendLine(maskOk
+                    ? "  Mask includes the Interactable layer. OK."
+                    : "  MASK DOES NOT INCLUDE LAYER 9 — run Setup > Configure Layers & Physics.");
+                if (sensor.GetComponentInParent<HandActionController>() == null)
+                    sb.AppendLine("  NO HandActionController on the astronaut — EatableObject.CanInteract " +
+                                  "always returns false, so every snack is inert.");
+            }
+
+            var root = GameObject.Find(SnacksRoot);
+            if (root == null)
+                sb.AppendLine($"  NO '{SnacksRoot}' object in the scene. The three snacks were never " +
+                              "placed — press 'Build the three snacks'.");
+            else
+                foreach (Kind kind in new[] { Kind.Carrot, Kind.Lettuce, Kind.Apple })
+                    Report(sb, root, kind, sensor, eye, reach);
+
+            var others = Object.FindObjectsByType<EatableObject>(FindObjectsInactive.Include);
+            sb.AppendLine($"  {others.Length} eatable object(s) in the scene in total.");
+            Debug.Log(sb.ToString(), root);
+        }
+
+        static void Report(StringBuilder sb, GameObject root, Kind kind, InteractionSensor sensor,
+                           Vector3 eye, float reach)
+        {
+            Transform t = root.transform.Find("Snack_" + kind);
+            if (t == null) { sb.AppendLine($"  {kind,-8}  MISSING — not under '{SnacksRoot}'."); return; }
+
+            var eat = t.GetComponent<EatableObject>();
+            var col = t.GetComponentInChildren<SphereCollider>(true);
+            var mr = t.GetComponent<MeshRenderer>();
+            var mf = t.GetComponent<MeshFilter>();
+            Vector3 p = t.position;
+
+            sb.AppendLine($"  {kind,-8}  at ({p.x:0.0}, {p.y:0.0}, {p.z:0.0})");
+            sb.AppendLine($"      active={t.gameObject.activeInHierarchy}  " +
+                          $"EatableObject={(eat != null ? (eat.enabled ? "yes" : "DISABLED") : "MISSING")}  " +
+                          $"mesh={(mf != null && mf.sharedMesh != null ? mf.sharedMesh.name : "MISSING")}  " +
+                          $"renderer={(mr != null && mr.enabled ? "on" : "OFF")}");
+
+            if (col == null) { sb.AppendLine("      NO trigger collider — the sensor can never see it."); return; }
+
+            float worldRadius = col.radius * Mathf.Max(Mathf.Abs(col.transform.lossyScale.x),
+                                Mathf.Max(Mathf.Abs(col.transform.lossyScale.y),
+                                          Mathf.Abs(col.transform.lossyScale.z)));
+            sb.AppendLine($"      trigger: layer={LayerMask.LayerToName(col.gameObject.layer)}" +
+                          $"({col.gameObject.layer})  isTrigger={col.isTrigger}  " +
+                          $"enabled={col.enabled}  radius={worldRadius:0.00} m world");
+
+            if (col.gameObject.layer != NasaLayers.Interactable)
+                sb.AppendLine($"      WRONG LAYER — must be {NasaLayers.Interactable} (Interactable).");
+
+            if (sensor != null)
+            {
+                float d = Vector3.Distance(eye, col.transform.position + col.center);
+                float need = reach + worldRadius;
+                sb.AppendLine(d <= need
+                    ? $"      In range from where the astronaut stands NOW ({d:0.0} m ≤ {need:0.0} m)."
+                    : $"      {d:0.0} m from the astronaut — you must walk to within {need:0.0} m of it. " +
+                      "That is expected unless you are already standing there.");
+            }
+        }
 
         [MenuItem("Tools/NASA Sim/Interactables/The Three Snacks (Carrot, Lettuce, Apple)")]
         public static void Open()
@@ -56,9 +145,21 @@ namespace NasaSim.EditorTools
             w.AutoAnchor();
         }
 
+        /// <summary>
+        /// Default to the POND, not the astronaut. The astronaut spawns a hundred metres up the tunnel, so
+        /// measuring from there picked whichever beds happened to face that way — the far side of the
+        /// greenhouse. The beds worth using are the ones you walk past on your way round the water.
+        /// </summary>
         void AutoAnchor()
         {
             if (Selection.activeTransform != null) { _anchor = Selection.activeTransform; return; }
+
+            var moat = GameObject.Find("WATER_Moat");
+            if (moat != null) { _anchor = moat.transform; return; }
+
+            var water = Object.FindAnyObjectByType<WaterBody>();
+            if (water != null) { _anchor = water.transform; return; }
+
             var astronaut = Object.FindAnyObjectByType<AstronautController>();
             if (astronaut != null) _anchor = astronaut.transform;
         }
@@ -86,8 +187,14 @@ namespace NasaSim.EditorTools
             _lettuceWidth = EditorGUILayout.Slider(new GUIContent("Lettuce head"), _lettuceWidth, 0.08f, 0.35f);
             _appleWidth = EditorGUILayout.Slider(new GUIContent("Apple"), _appleWidth, 0.04f, 0.20f);
             _appleHeight = EditorGUILayout.Slider(
-                new GUIContent("Apple hangs at", "Height above the soil. Put it where the hand can " +
-                               "comfortably reach it."), _appleHeight, 0.4f, 2.4f);
+                new GUIContent("Apple hangs at", "Height above the soil. The apple is placed in the middle " +
+                               "of the arch rather than beside it, so this is the one number that decides " +
+                               "whether it sits among the arch's own apples."), _appleHeight, 0.4f, 2.4f);
+            _soilLift = EditorGUILayout.Slider(
+                new GUIContent("Carrot / lettuce sit up by (m)",
+                               "Raises them off the bed's own bottom. The carrot's root is modelled below " +
+                               "the soil line on purpose, so this is how much of it shows before you pull " +
+                               "it — 0 buries the crown."), _soilLift, 0f, 0.3f);
 
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("How it plays", EditorStyles.boldLabel);
@@ -500,18 +607,27 @@ namespace NasaSim.EditorTools
                 return null;
             }
 
+            if (kind == Kind.Apple)
+            {
+                // Dead centre of the arch, not beside it. Offsetting the apple outward is what left it
+                // hanging in the aisle next to the arch's own apples instead of among them; the only thing
+                // that should decide where it sits is the height.
+                seat = new Vector3(bestBounds.center.x, bestBounds.min.y + _appleHeight, bestBounds.center.z);
+                return best;
+            }
+
             Vector3 away = from - bestBounds.center;
             away.y = 0f;
             away = away.sqrMagnitude > 1e-4f ? away.normalized : Vector3.forward;
 
-            // Clamped at both ends: an apple arch is metres wide, and clearing half of it would leave the
-            // snack floating in the aisle instead of sitting in the bed it came from.
+            // Clamped at both ends: a bed can be metres wide, and clearing half of it would leave the
+            // snack out in the aisle instead of standing in the soil it came from.
             float step = Mathf.Clamp(bestBounds.extents.x * 0.5f + 0.30f, 0.45f, 1.2f);
             Vector3 p = bestBounds.center + away * step;
             // Soil level comes from the bed's own bottom, so it lands on whatever the plants are standing
-            // on rather than on a guessed y.
-            p.y = bestBounds.min.y;
-            if (kind == Kind.Apple) p.y += _appleHeight;
+            // on rather than on a guessed y — then lifted, because that bottom is the lowest point of the
+            // plant GEOMETRY and is usually a little under the visible surface.
+            p.y = bestBounds.min.y + _soilLift;
             seat = p;
             return best;
         }

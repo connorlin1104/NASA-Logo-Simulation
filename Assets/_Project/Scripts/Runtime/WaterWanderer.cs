@@ -31,6 +31,20 @@ namespace NasaSim
         // but the end would turn every saved fish into a lilypad.
         public enum Mode { Duck, Fish, Lilypad }
 
+        /// <summary>
+        /// Degrees to turn the model so its nose points the way it is swimming.
+        ///
+        /// This steers along +Z, but Duck.fbx and Fish.fbx are both modelled facing their own <b>−X</b> —
+        /// the fish's body runs 10 units along X with the eyes at the low end and the tail fin at the
+        /// high end — so without this they swim sideways. Turning the visual instead of the heading keeps
+        /// the movement maths honest: the creature still travels along +Z and only the picture is rotated.
+        ///
+        /// 90 is right for the models in this project. If a future one faces the other way, this is the
+        /// one number to change (and 180 flips a model that swims backwards).
+        /// </summary>
+        [Header("Which way the model faces")]
+        [Range(-180f, 180f)] public float modelYaw = 90f;
+
         [Header("Wander")]
         public Mode mode = Mode.Duck;
         [Tooltip("The pond/moat this creature lives in. Auto-found from the parent if left empty.")]
@@ -189,7 +203,7 @@ namespace NasaSim
                 Vector3 want = Vector3.Slerp(Vector3.up, water.SurfaceNormalAt(p), waveTilt);
                 _up = Vector3.Slerp(_up, want, 1f - Mathf.Exp(-tiltResponse * dt));
                 transform.rotation = Quaternion.FromToRotation(Vector3.up, _up)
-                                   * Quaternion.Euler(0f, _yaw, 0f);
+                                   * Quaternion.Euler(0f, _yaw + modelYaw, 0f);
             }
             else
             {
@@ -198,7 +212,15 @@ namespace NasaSim
                 transform.position = p;
 
                 float waggle = Mathf.Sin((Time.unscaledTime + _phase) * waggleFrequency * Mathf.PI * 2f) * waggleDeg;
-                transform.rotation = Quaternion.Euler(0f, _yaw, waggle);
+
+                // Rolled about the direction of TRAVEL, not about the transform's own Z. Euler(0, y, z)
+                // applies the roll in the model's local frame, and this fish's local Z is its lateral
+                // axis — so once modelYaw turns it nose-first, that same roll becomes the fish pitching
+                // its nose up and down twice a second. Banking around the line it is swimming along is
+                // what the waggle was always meant to be, and it does not care how the model is built.
+                Vector3 travel = Quaternion.Euler(0f, _yaw, 0f) * Vector3.forward;
+                transform.rotation = Quaternion.AngleAxis(waggle, travel)
+                                   * Quaternion.Euler(0f, _yaw + modelYaw, 0f);
             }
         }
 

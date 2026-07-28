@@ -502,17 +502,19 @@ namespace NasaSim.EditorTools
                 Color bright = new Color(0.79f, 0.115f, 0.085f);
                 Color blush = new Color(0.86f, 0.63f, 0.16f);
 
-                Color c = Color.Lerp(deep, bright, Mathf.SmoothStep(0f, 1f, mottle * 0.7f + 0.35f));
-                c = Color.Lerp(c, blush, Mathf.SmoothStep(0.56f, 0.92f, streak) * 0.55f);
+                // fbm clusters around 0.5, so the edges are set close in — a 0..1 pair would leave the
+                // whole skin sitting flat in the middle of the ramp.
+                Color c = Color.Lerp(deep, bright, Step(0.34f, 0.68f, mottle));
+                c = Color.Lerp(c, blush, Step(0.52f, 0.80f, streak) * 0.6f);
                 // Green-gold creeping up from the calyx end.
-                c = Color.Lerp(c, new Color(0.62f, 0.66f, 0.20f), Mathf.SmoothStep(0.20f, 0f, v) * 0.45f);
+                c = Color.Lerp(c, new Color(0.62f, 0.66f, 0.20f), Step(0.20f, 0f, v) * 0.45f);
 
                 // Freckles: sparse, pale, and only where the skin is already dark enough to show them.
                 float dots = Fbm(u * 150f + 7f, v * 150f + 19f, 1);
-                c = Color.Lerp(c, new Color(0.92f, 0.84f, 0.62f), Mathf.SmoothStep(0.88f, 0.97f, dots) * 0.5f);
+                c = Color.Lerp(c, new Color(0.92f, 0.84f, 0.62f), Step(0.86f, 0.97f, dots) * 0.5f);
 
-                // Both wells sit in shadow whatever the light does.
-                float well = Mathf.SmoothStep(0f, 0.055f, v) * Mathf.SmoothStep(1f, 0.945f, v);
+                // Both wells sit in shadow whatever the light does — and ONLY the wells.
+                float well = Step(0f, 0.055f, v) * Step(1f, 0.945f, v);
                 return c * Mathf.Lerp(0.42f, 1f, well);
             });
         }
@@ -526,19 +528,20 @@ namespace NasaSim.EditorTools
                 Color bright = new Color(0.93f, 0.455f, 0.095f);
 
                 float grain = Fbm(u * 6f, v * 30f, 3);
-                Color c = Color.Lerp(deep, bright, Mathf.SmoothStep(0.15f, 0.85f, grain));
+                Color c = Color.Lerp(deep, bright, Step(0.36f, 0.66f, grain));
 
                 // Rings. Irregular spacing, or it looks machined.
                 float rings = Mathf.Abs(Mathf.Sin(v * 190f + Fbm(u * 3f, v * 9f, 2) * 6f));
-                c *= Mathf.Lerp(0.80f, 1.05f, Mathf.SmoothStep(0f, 0.55f, rings));
+                c *= Mathf.Lerp(0.84f, 1.05f, Step(0f, 0.45f, rings));
 
-                // Short dark dashes where the rootlets came off.
+                // Short dark dashes where the rootlets came off. Sparse — this is freckling, not a coat.
                 float hairs = Fbm(u * 40f + 11f, v * 240f, 2);
-                c = Color.Lerp(c, new Color(0.36f, 0.15f, 0.045f), Mathf.SmoothStep(0.80f, 0.95f, hairs) * 0.55f);
+                c = Color.Lerp(c, new Color(0.36f, 0.15f, 0.045f), Step(0.70f, 0.88f, hairs) * 0.40f);
 
-                // The tip is darker and a little wet-looking; the shoulder above the soil is paler and greened.
-                c *= Mathf.Lerp(0.66f, 1f, Mathf.SmoothStep(0f, 0.30f, v));
-                c = Color.Lerp(c, new Color(0.45f, 0.50f, 0.16f), Mathf.SmoothStep(0.88f, 1f, v) * 0.7f);
+                // The tip is darker and a little wet-looking. The green is the shoulder that sat in the
+                // light above the soil, so it belongs to the top few percent and nowhere else.
+                c *= Mathf.Lerp(0.70f, 1f, Step(0f, 0.25f, v));
+                c = Color.Lerp(c, new Color(0.45f, 0.50f, 0.16f), Step(0.94f, 1f, v) * 0.75f);
                 return c;
             });
         }
@@ -553,18 +556,36 @@ namespace NasaSim.EditorTools
                 Color deepGreen = new Color(0.20f, 0.42f, 0.13f);
 
                 float blotch = Fbm(u * 9f, v * 6f, 4);
-                Color c = Color.Lerp(midGreen, deepGreen, Mathf.SmoothStep(0.35f, 0.85f, blotch));
+                Color c = Color.Lerp(midGreen, deepGreen, Step(0.38f, 0.68f, blotch));
                 // The base of every leaf is the pale thick part; the frill at the tip is the darkest.
-                c = Color.Lerp(stemPale, c, Mathf.SmoothStep(0.02f, 0.42f, v));
-                c = Color.Lerp(c, deepGreen, Mathf.SmoothStep(0.72f, 1f, v) * 0.55f);
+                c = Color.Lerp(stemPale, c, Step(0.02f, 0.42f, v));
+                c = Color.Lerp(c, deepGreen, Step(0.72f, 1f, v) * 0.55f);
 
                 // The midrib runs up u = 0.5 and tapers out; the side veins fan off it.
-                float rib = Mathf.SmoothStep(0.055f, 0f, Mathf.Abs(u - 0.5f)) * Mathf.SmoothStep(1f, 0.25f, v);
+                float rib = Step(0.055f, 0f, Mathf.Abs(u - 0.5f)) * Step(1f, 0.25f, v);
                 float side = Mathf.Abs(Mathf.Sin((u - 0.5f) * 14f + v * 17f));
-                float veins = Mathf.SmoothStep(0.95f, 1f, 1f - side) * Mathf.SmoothStep(0.06f, 0.5f, v);
+                float veins = Step(0.95f, 1f, 1f - side) * Step(0.06f, 0.5f, v);
                 c = Color.Lerp(c, stemPale, Mathf.Clamp01(rib * 0.85f + veins * 0.45f));
                 return c;
             });
+        }
+
+        /// <summary>
+        /// A 0..1 mask that ramps between two edges — GLSL's <c>smoothstep</c>.
+        ///
+        /// <b>Not <see cref="Mathf.SmoothStep"/>, which is a different function with a confusingly similar
+        /// name.</b> Unity's takes (from, to, t) and returns a smoothed value BETWEEN from and to; it is a
+        /// Lerp, not a threshold. Used as a mask it returns roughly its own edge values whatever the input
+        /// is, so "tint the top 7% green" became "tint all of it green" and "darken only the two wells"
+        /// became "multiply the whole apple by 0.45". Hence a green carrot and a brown apple.
+        ///
+        /// Edges may be given in either order; a descending pair gives a descending ramp.
+        /// </summary>
+        static float Step(float edge0, float edge1, float x)
+        {
+            if (Mathf.Abs(edge1 - edge0) < 1e-6f) return x < edge0 ? 0f : 1f;
+            float t = Mathf.Clamp01((x - edge0) / (edge1 - edge0));
+            return t * t * (3f - 2f * t);
         }
 
         static Texture2D Bake(int size, System.Func<float, float, Color> shade)
