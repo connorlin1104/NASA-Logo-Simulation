@@ -37,13 +37,13 @@ namespace NasaSim
         /// <summary>
         /// Degrees to turn the model so its nose points the way it is swimming.
         ///
-        /// This steers along +Z, but Duck.fbx and Fish.fbx are both modelled facing their own <b>−X</b> —
-        /// the fish's body runs 10 units along X with the eyes at the low end and the tail fin at the
-        /// high end — so without this they swim sideways. Turning the visual instead of the heading keeps
+        /// This steers along +Z, and the models do not: Duck.fbx is built facing its own +X and Fish.fbx
+        /// its own −X, so without this they swim sideways. Turning the visual instead of the heading keeps
         /// the movement maths honest: the creature still travels along +Z and only the picture is rotated.
         ///
-        /// 90 is right for the models in this project. If a future one faces the other way, this is the
-        /// one number to change (and 180 flips a model that swims backwards).
+        /// <b>+90 for ducks and lilypads, −90 for fish</b> — the two models face opposite ways, so their
+        /// values are 180° apart. If a future model swims sideways this is the one number to change, and
+        /// if it swims backwards, add 180 to it.
         /// </summary>
         [Header("Which way the model faces")]
         [Range(-180f, 180f)] public float modelYaw = 90f;

@@ -1008,19 +1008,20 @@ namespace NasaSim.EditorTools
         /// How far to turn each model so its nose points the way it swims. <see cref="WaterWanderer"/>
         /// steers along +Z; this says where the model's own nose actually is.
         ///
-        /// <b>90 for everything, and that is an observed fact rather than a derived one.</b> The geometry
-        /// argues for two different values: Duck.fbx is modelled facing +X (chest +1.05, rump −1.05, tail
-        /// −2.05, bill +2.42) and Fish.fbx facing −X (eyes at the low-X end, caudal fin at the high-X end),
-        /// with identical axis settings in both files and no node rotations to reconcile them — so passing
-        /// both through the same import should leave them pointing opposite ways.
+        /// <b>Duck +90, fish −90 — opposite, because the models are.</b> Duck.fbx is built facing +X
+        /// (chest +1.05, rump −1.05, tail −2.05, bill +2.42) and Fish.fbx facing −X (eyes at the low-X end,
+        /// caudal fin at the high-X end), with identical import settings in both files and no node
+        /// rotations to reconcile them. Two models facing opposite ways need values 180° apart, and the
+        /// duck — which has always visibly swum nose-first — fixes which of the pair is which.
         ///
-        /// In the running game they do not. The duck is right at 90 and so is the fish, which means the
-        /// reading of one of those two models is wrong somewhere between the FBX and the screen. Rather
-        /// than encode a derivation that is demonstrably not what happens, this encodes what does.
+        /// An earlier pass put both at 90 and called that observed. It was observed, but not on a fish that
+        /// was going anywhere: every fish in the moat was pinned against a bank at the time, and a creature
+        /// that is not travelling cannot tell you which end of it leads. Once the wildlife actually swam
+        /// (see <see cref="WaterWanderer.SteerAroundBanks"/>) the fish were plainly going tail-first.
         ///
         /// Lilypads are near enough round for it not to matter.
         /// </summary>
-        static float ModelYawFor(Kind kind) => 90f;
+        static float ModelYawFor(Kind kind) => kind == Kind.Fish ? -90f : 90f;
 
         static string Prefix(Kind kind) => kind + "_";
 
