@@ -21,7 +21,7 @@ namespace NasaSim.EditorTools
     public sealed class WaterBodyEditor : Editor
     {
         float _fitGap = 0.5f;
-        int _ducks = -1, _fish = -1;
+        int _ducks = -1, _fish = -1, _lilypads = -1;
 
         public override void OnInspectorGUI()
         {
@@ -97,12 +97,14 @@ namespace NasaSim.EditorTools
             {
                 _ducks = EditorGUILayout.IntField("Ducks", _ducks);
                 _fish = EditorGUILayout.IntField("Fish", _fish);
+                _lilypads = EditorGUILayout.IntField("Lilypads", _lilypads);
             }
             using (new EditorGUILayout.HorizontalScope())
             {
                 if (GUILayout.Button("Apply population"))
                 {
-                    WildlifeSpawnTool.Spawn(body, Mathf.Max(0, _ducks), Mathf.Max(0, _fish));
+                    WildlifeSpawnTool.Spawn(body, Mathf.Max(0, _ducks), Mathf.Max(0, _fish),
+                                            Mathf.Max(0, _lilypads), true, false);
                     CountWildlife(body);
                 }
                 if (GUILayout.Button("Put wildlife back in the water"))
@@ -121,11 +123,12 @@ namespace NasaSim.EditorTools
 
         void CountWildlife(WaterBody body)
         {
-            _ducks = _fish = 0;
+            _ducks = _fish = _lilypads = 0;
             foreach (Transform c in body.transform)
             {
                 if (c.name.StartsWith("Duck_")) _ducks++;
                 else if (c.name.StartsWith("Fish_")) _fish++;
+                else if (c.name.StartsWith("Lilypad_")) _lilypads++;
             }
         }
 

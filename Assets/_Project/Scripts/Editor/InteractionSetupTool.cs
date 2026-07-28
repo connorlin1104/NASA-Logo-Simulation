@@ -78,7 +78,46 @@ namespace NasaSim.EditorTools
 
             EditorSceneManager.MarkSceneDirty(uiRoot.scene);
             Debug.Log("[InteractionSetup] Prompt UI + InteractionSensor ready. Interact key: E. " +
-                      "C toggles first-person / fly-cam.", uiRoot);
+                      "C toggles first-person / fly-cam. F1 hides the prompts for recording.", uiRoot);
+        }
+
+        // ================================================================== recording mode
+
+        [MenuItem("Tools/NASA Sim/Setup/Hide The [E] Prompts (Recording)")]
+        public static void HidePrompts() => SetPrompts(false);
+
+        [MenuItem("Tools/NASA Sim/Setup/Show The [E] Prompts Again")]
+        public static void ShowPrompts() => SetPrompts(true);
+
+        /// <summary>
+        /// Silences the captions without touching what you can interact with. The sensor still finds
+        /// everything in range and E still fires — the label simply never turns on, which is what a
+        /// screen recording wants and what disabling the canvas or the sensor would NOT give you.
+        /// </summary>
+        static void SetPrompts(bool visible)
+        {
+            var ui = Object.FindAnyObjectByType<InteractionPromptUI>(FindObjectsInactive.Include);
+            if (ui == null)
+            {
+                Debug.LogWarning("[InteractionSetup] No prompt UI in the scene. Run " +
+                                 "Tools > NASA Sim > Setup > Add Interaction System & UI first.");
+                return;
+            }
+
+            Undo.RecordObject(ui, visible ? "Show prompts" : "Hide prompts");
+            ui.showPrompts = visible;
+            if (!visible && ui.label != null)
+            {
+                Undo.RecordObject(ui.label, "Hide prompts");
+                ui.label.enabled = false;
+            }
+
+            EditorUtility.SetDirty(ui);
+            EditorSceneManager.MarkSceneDirty(ui.gameObject.scene);
+            Debug.Log(visible
+                ? "[InteractionSetup] Prompts are back on."
+                : "[InteractionSetup] Prompts hidden. Proximity and E still work exactly as before — " +
+                  "there is just nothing on screen. F1 toggles it in play mode too.", ui);
         }
 
         static GameObject FindOrCreateChild(Transform parent, string name)

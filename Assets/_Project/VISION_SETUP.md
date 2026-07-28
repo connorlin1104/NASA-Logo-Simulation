@@ -27,6 +27,7 @@ without jumping → **C** for the free-fly camera to admire the finished flower 
 | 5 | `Biodome ▸ Fix Dome Glass` | The big one: transparent, double-sided BiodomeGlass material — the dome is now visible from INSIDE and see-through from outside |
 | 6 | `Biodome ▸ Wire Colliders & Spawn Outside` | COL_/NOCOL_ colliders on the dome + tunnel, `SPAWN_Outside` marker, astronaut moved there |
 | 7 | `Setup ▸ Add Interaction System & UI` | The "[E] …" prompt UI + proximity sensor + the astronaut's hand (eat/pet flourishes); camera defaults to first person |
+| 7b | `Setup ▸ Hide The [E] Prompts (Recording)` | *(optional)* Silences the captions for a screen recording. Proximity and **E** still work exactly as before — there is just nothing on screen. **F1** toggles it mid-take; `Setup ▸ Show The [E] Prompts Again` puts them back |
 | 8 | `Biodome ▸ Build Airlock In Tunnel` | Doors, buttons, chamber sensor, gas vents, full pressurize cycle |
 | 9 | `Tractor ▸ Wire Steer Wheels From Axles` | *(optional — the follower now does this itself)* Fills Steer Wheels in at edit time so you can see the choice, and logs every wheel's measured hub position |
 | 10 | `Water ▸ Add Square Moat Around Grass` | The square moat: a band of animated water running around the grass patch (auto-sized to it), mud trench + collider, stocked with 3 ducks and 8 fish. Resize it any time on the WaterBody component or by dragging its edges in the Scene view |
@@ -52,11 +53,18 @@ the result by looking rather than by pressing Play. All are re-runnable and undo
 | `Station ▸ Hinged Doors` | Door meshes → swing open on **E**. Singles or two-leaf doubles; each gets a collider that travels with the panel and a prompt trigger that doesn't | **Orange outline** = shut, **green outline** = open, with the swept arc between them. Preview buttons swing them for real |
 | `Station ▸ Elevator` | Car + two-panel sliding door + call buttons + a ride zone that carries you | **Green box** = bottom stop, **cyan box** = top stop, rails and travel distance between them; dashed outlines where the door panels slide to. Preview buttons park the car at the top for real |
 | `Station ▸ Lighting` | The fix for "everything is dark" — see below | The Scene view is lit live; each lamp draws its reach |
-| `Station ▸ Helmet Off Inside` | A helmet that lifts off the head and gets tucked at the hip when you walk into pressurized air, and goes back on when you leave. **One zone per building** — see below | **Blue sphere** = worn, **orange sphere** = carried, a **yellow arc** for the path between them, and a box per zone with the dead band drawn inside it. Preview buttons park it at either end |
-| `Station ▸ Pressure Chamber Gas` | Gas fills one chamber of the tunnel while you stand in it and vents when you leave. No button, no doors, nothing to get stuck in | **Blue box** = the room, shaded to 45 % so you can see where the gas will sit |
+| `Station ▸ Helmet Off Inside` | A helmet that lifts off the head, is **held out in front of you turning** for a beat, then gets tucked at the hip — **once**, the moment you step into a box you place yourself, and never goes back on — see below | **Blue sphere** = worn, **green sphere** = held up, **orange sphere** = carried, a **yellow path** through all three, and the trigger box as a solid green volume. Preview buttons park it at either end |
+| `Station ▸ Pressure Chamber Gas` | Gas fills one chamber of the tunnel while you stand in it and vents when you leave. Lamps and gas hold **red** for 4 s then snap **green**. No button, no doors, nothing to get stuck in | **Blue box** = the room, shaded to 45 % so you can see where the gas will sit, labelled with the time to green |
 | `Station ▸ Flying Drone` | The parked drone → **E** launches it, **E** again calls it home. It spins up, lifts off, flies a loop and lands itself | **Blue curve** = the route it will actually fly, **yellow spheres** = draggable markers, **green sphere** = the pad |
+| `Station ▸ Monitor Screens` | Puts something else on the station's twenty screens: a live camera feed of the mow, your own picture, a flat colour, or off — see below | The list of screens it found, and what else uses each material (that is how it tells a screen from its frame) |
 | `Plants ▸ Colour The Produce` | Gives every crop species its own colour — see below | Nothing to preview: it changes the materials, so the Scene view *is* the result |
 | `Grass ▸ Tone Down The Grass` | Puts the lawn, the blades and the scattered tufts back to a green you can read the logo against — see below | Swatches of what all three materials hold right now, so you can see the neon one |
+| `Biodome ▸ Dome Glass` | The dome, with its tint and opacity as numbers. Fixes "white from outside, invisible from inside" — see below | The shell renderers it matched, with their sizes, before you touch anything |
+| `Fix ▸ Stop The Ground Flickering` | Finds surfaces sharing one plane, which is what makes the field shimmer from the elevator — see below | The list of duplicate stacks and near-coplanar pairs, each row clickable |
+| `Interactables ▸ The Three Snacks (Carrot, Lettuce, Apple)` | **The one to use for a take.** Builds one of each at close-up quality, puts it beside the matching bed, and makes them the only eatable things in the scene — see below | How many other eatable objects will be turned back into scenery |
+| `Interactables ▸ Make The Plants Eatable` | Wires the ~1,800 crops in the biodome for **[E] Eat**. Bulk scenery, *not* for close-ups — see below | A count per crop, and how many will actually be wired after the cap and the spacing |
+| `Water ▸ Spawn Ducks, Fish && Lilypads` | Instantiates Duck/Fish/Lilypad.fbx whole, and rebuilds anything in the water that is only part of a model — see below | What is broken in the scene right now, and which FBXs it found |
+| `Water ▸ Make Fountain` | A stone basin with real water, jets solved to land where you tell them, spill, splash, ripples and mist — see below | A live readout of the tilt, flight time, peak height and landing distance before you build |
 
 **The four collider modes.** A station needs different collision in different places:
 
@@ -129,6 +137,59 @@ the pressure is actually changing — which is what makes the still moment at th
 rather than *still filling*. The tunnel's chambers are the groups ending in `Lock_GRP`; counting in from
 the outside door, `CrewLock` is the first and `EquipLock` the second.
 
+**Red, then green — never orange.** The status colour is **held at red for the whole cycle and flipped**
+on completion rather than cross-faded, because a blend spends most of four seconds in muddy orange, which
+reads as a broken lamp rather than as a room that is not safe yet — and it gives the answer away before
+the cycle has finished. Two lamps, one high and one low, each reaching the far corner: a single point
+light near the ceiling lights *the ceiling*, and "the room turns red" becomes "there is a red bulb up
+there". The **gas itself is dyed** the same colour, which is what actually makes the room read red — the
+vapour is the biggest thing in there. Default timing is 0.5 s sealing plus 3.5 s of gas, so it goes green
+**4 seconds** after you step in, with a brief flare at the changeover so you catch it without watching
+the lamp.
+
+**The helmet comes off once, where you put the box.** This is the default and it is what a single
+continuous take needs. `Station ▸ Helmet Off Inside` ▸ **Once, where I put the box** ▸ *Create the
+trigger box*, then drag `HelmetTrigger` in the Scene view to wherever the take-off should happen — it
+draws as a solid green volume labelled **STEP HERE**. The moment the astronaut is inside it, the helmet
+comes off, and after that it is off for the rest of the run.
+
+**Off means off.** There is exactly one latch and every route back goes through `PutOn()`, which refuses
+while it is set — so leaving the volume, a chamber venting, a zone boundary and the **H** key are all
+dead ends rather than four separate things to remember. `H` still works as a one-way shortcut: it can
+bring the moment forward, never undo it. The latch is deliberately *not* serialized, or the second time
+you pressed Play the helmet would never come off at all.
+
+There is no hysteresis here and no edge detection, and that is the point: an edge can be crossed back the
+other way, and a latch cannot.
+
+**The one wait.** If you put the box *inside* a `PressureChamber`, that chamber still has to finish
+pressurizing first — red for 4 s, green, then the helmet comes off 0.6 s later — because putting the
+take-off in the airlock plainly means "after it has air in it". Put the box anywhere else and stepping in
+is the whole trigger, with no delay. The window says which of the two you have, with the number. Untick
+*Wait for the gas chamber* to make it instant everywhere.
+
+Before you press Play, the window tells you **how many metres the astronaut starts from the box**, and
+turns red if the spawn point is inside it — that is the one placement that silently ruins the shot, since
+the helmet would come off in the first second before you had walked anywhere.
+
+**The old reversible behaviour** is still there behind *Once* = off: pressurized zones, edge-triggered,
+helmet back on when you leave, and a chamber you are standing in overriding the zone. Everything in the
+next few paragraphs describes that mode. It is no good for recording, because it can always undo itself.
+
+**And you can actually see it come off.** The move is three parts, not a fade: up off the head, **out in
+front of the body where the camera can see it**, held there for 1.3 s turning and tipped forward so you
+can see into the bowl, and only then tucked at the hip. In first person that lands in the middle of the
+view. The presented position is computed from the **body's** forward rather than the head bone's, so it
+stays put in front of you while you look around — anchoring it to the head would swing the helmet round
+the room every time the mouse moved. The whole journey is one number in `[0, 1]` with the presented pose
+at `0.5`, which is what makes turning back in the doorway *reverse* the move instead of being ignored.
+
+One setting silently ruins all of this in zone mode: **Off already at spawn**. With it ticked and a zone
+that contains the spawn point, the helmet is at the hip on frame one and you never see it at all. The
+window flags that in red with a one-click fix. In *Once* mode the setting is forced off and greyed out
+entirely — a one-time take-off that has already happened before frame one is the one thing it must never
+do, so it is not left as something you could tick by accident.
+
 **The drone.** `Station ▸ Flying Drone` puts the flight logic on a **pad beside the drone, not on the
 drone**. That is the whole design: the interaction sensor walks *up* from a trigger collider to find the
 interactable, so the trigger has to sit under the component — and if that were the drone, the trigger
@@ -162,6 +223,150 @@ there: those tufts have been **pure white since they were made**, which is most 
 scatter copies the FBX's own untinted material so it can turn GPU instancing on, and the green fallback
 in that copy only fires when the model has no material at all — which it does have.
 
+**Why the field shimmers from the elevator.** Two surfaces sharing one plane. The depth buffer stores a
+rounded number, so for coplanar geometry "which one is in front" comes out of floating-point noise and
+flips per pixel, per frame, as the camera moves. It gets worse with distance, because depth precision is
+spent close to the camera; and worse at a shallow angle, because one pixel then covers a long stretch of
+ground. Close up and looking straight down the same two surfaces look perfect — which is why this reads
+as "flickering from the elevator" rather than as "the ground is broken". In this scene it was the
+**ground plane drawn twice**: `SettingEnvo/Floor/…GROUND` and `SettingEnvo/Don_t_include__Hide/…GROUND`,
+same mesh, same world transform (y = −0.1805, scale 54.204), both switched on. The group name says what
+was meant; the checkbox was never unticked. `Fix ▸ Stop The Ground Flickering` finds duplicate stacks and
+switches off the redundant **renderer** — not the GameObject, which may carry colliders something is
+standing on — and separately lifts near-coplanar sheets apart, which is the right fix when the meshes
+genuinely differ. If it finds nothing, the next suspects in order are shadow acne (raise the light's
+bias), a starved depth range (raise the camera's **Near** plane before you lower Far — it buys far more),
+and a tiling texture aliasing at distance.
+
+**The dome.** "I can't see it from inside" and "from outside it's just white" are the *same* bug seen
+from two places: the shell's material is opaque and single-sided. A closed hull rendered single-sided
+shows a camera inside it nothing but back faces, and back faces are culled — so the dome vanishes
+entirely the moment you walk in, while reading as a solid wall from outside. Transparent + **Render Face
+Both** fixes both at once. The reason the old one-click `Fix Dome Glass` had stopped working is worth
+knowing: it looked for `COL_tunnel` / `NOCOL_Dome`, names the current import doesn't use — the shell is
+now `newGreenHouse_2:_sh01_connor_anim_v002:Biosphere2`. It now matches on the **leaf** of the name with
+the Maya namespace stripped, and refuses anything containing `airlock`, `door` or `hatch`, because every
+airlock part in this scene carries `BiodomeAirlockDoor1` in its namespace and would otherwise turn to
+glass along with the dome. Keep the opacity low: the dome is 55 m across and the far side draws over the
+near side, so a reasonable-looking 30 % pane stacks up into fog. 8–12 % reads as glass.
+
+**The monitors.** The screens are painted by a material embedded in `SettingEnvo.fbx`, and imported
+materials are read-only sub-assets — there is no field on one to change. The only way to put something
+else on a screen is to make a real material and reassign the slot, which is what
+`Station ▸ Monitor Screens` does. Finding *which* slot without hard-coding "slot 1": each monitor has a
+frame and a screen, and the tool counts how many **non-monitor** objects use each material. The frame
+material also appears on the stands and the desks, so it has outside users; the screen material is used
+by monitors and nothing else. Zero outside users means it is a screen — and the window shows you that
+count before you commit. The interesting channel is the **live feed**: a camera in the world renders into
+a RenderTexture that all twenty screens sample, framed overhead of the logo, chasing the tractor, or
+bolted to the drone. It renders **on demand at 20 fps**, not every frame — the camera is left disabled
+and driven by explicit `Render()` calls, because a monitor updating at 20 fps looks identical to one
+updating at 165 and costs a fifth as much. The screens use an *Unlit* shader on purpose: a display emits
+its own light and should not go dark when the biodome does.
+
+**Ducks, fish and lilypads.** `Water ▸ Spawn Ducks, Fish & Lilypads` **instantiates `Duck.fbx` /
+`Fish.fbx` / `Lilypad.fbx` whole**, and falls back to the `PH_` primitives only when they are not in the
+project. The gameplay scripts live on a plain root and the model is a pure visual child either way,
+which is why swapping one for the other costs no re-wiring.
+
+The FBX is the duck. Nothing in the scene is treated as authoritative, because the scene is where it
+went wrong:
+
+- **Reading models out of the scene by NAME is what broke it.** Nineteen of the twenty nodes in
+  `Duck.fbx` carry the Maya namespace (`Duck:mallard_body`); the bill is plain `mallard_bill`. A name
+  test dropped it, the group above then contained one mesh that wasn't "ours", the "is this the whole
+  model?" climb stopped dead at every individual limb, and the tool wired a bill, a wing and a foot into
+  the moat as three separate ducks — each keeping its own tiny native scale. That is not a bug with a
+  clever fix; matching by name cannot be made safe, and instantiating the asset needs no matching at all.
+- **Anything that is not the whole model is thrown away and rebuilt.** Every animal in the water is
+  compared against the mesh set a fresh instance would have, and one missing so much as a foot is
+  destroyed and built again from the FBX. This is what *heals* a scene an older version already ran on —
+  re-running the tool fixes the damage instead of carefully preserving it. The window names what it
+  found before you press anything; `Rescan` recounts.
+- **Loose pieces elsewhere in the scene are listed, and only listed.** Fragments left stranded outside
+  any water get a **Delete the leftover pieces** button. A *complete* model somebody placed on purpose is
+  never offered up — only things that draw part of a model and no more.
+- **Adoption is opt-in and off.** Sweeping the scene for hand-placed animals is the thing that used to go
+  wrong, so you have to ask for it. When you do, an adopted animal is **wrapped** into the same shape as
+  a built one — `Duck_01` holding a `Duck_01_Model` child and an `InteractTrigger` — which is what lets
+  the resize scale the model without dragging the trigger's radius with it, and any `PettableObject`
+  already on it by hand is stripped so there aren't two interactables competing for the same **E**.
+- **The sizes are sliders**, defaulting to roughly double life size (duck 1.1 m, fish 0.7 m, lilypad
+  1.5 m). A real mallard is 0.55 m and reads as a speck across a 47 m moat; these are sized for the
+  distance they are actually looked at from. *Resize what's already there* is on by default.
+- **It puts the FBX's materials back.** The imported fish was wearing `Grass.mat` on its body and
+  `Fruit.mat` on its fins: a bulk recolour swept over it while it sat loose in the scene. Freshly built
+  instances never have the problem because they come straight off the asset; an adopted one does, so it
+  is repaired renderer-by-renderer on the way in.
+
+Ducks and fish both take a pat. Lilypads use the duck's float code — they sit on the wave the water
+shader is *actually drawing* and lean with it — but turn on the spot and creep with a slow current
+instead of paddling; a pad that ignored the swell while the ducks rode it would give the wave away.
+Placeholders always lose when the population shrinks, and **Replace the placeholder ones** clears them
+out entirely so the real models take over.
+
+**The three snacks.** `Interactables ▸ The Three Snacks (Carrot, Lettuce, Apple)` builds one carrot, one
+lettuce and one apple at close-up quality and drops each beside the nearest bed of its own crop. They are
+the only things in the scene that answer **[E]**, and there are two separate reasons for that:
+
+- **The greenhouse crops are decimated.** Fine in a bed forty metres away, terrible held against the
+  visor. These three are the only produce the camera ever gets near, so they are the only three worth
+  spending polygons on — about 9k triangles for the apple, 14k for the carrot, 12k for the lettuce, which
+  is nothing for one object each.
+- **The plant the greenhouse calls a unit is not what you would call one.** The node that was wired up as
+  "an apple" is `appleArch10MeshGroup` — the whole trellis arch. Pressing **E** grabbed an entire arch,
+  shrank it step by step and ate it. **Only these three are eatable** strips `EatableObject` off
+  everything else in the scene so nothing can be picked up by mistake mid-take.
+
+The meshes are generated rather than modelled: lathes for the apple and the carrot through a hand-tuned
+profile, and one leaf function that draws the apple leaf, the carrot's feathery tops and the lettuce's
+sixteen ruffled leaves. Normals come from finite differences of the position field rather than from
+`RecalculateNormals`, which is what keeps a ridged carrot and the seam of a lathe smooth. The skins are
+baked to PNG and imported normally, so they get sRGB and mipmaps like any other texture.
+
+**The carrot is buried.** Its mesh puts y = 0 at the soil line with the whole root below it, so until you
+pull it all you can see is the greens. The pull itself is a beat of its own: the hand presses *into* the
+plant, the carrot gives a few millimetres the wrong way, it barely moves while the arm strains, and then
+it lets go and flies — soil coming off it at the moment of release, not before. It is then held up near
+the visor and turned for a second or so before the first bite. All of that is on the component:
+**Pluck Direction / Distance / Seconds** and **Inspect Seconds** per object, **Pluck Load / Pluck Snap /
+Inspect Spin** on the astronaut's `HandActionController`.
+
+**Eating the crops (the bulk tool).** The greenhouse names every individual plant `<species><n>MeshGroup`,
+with its parts as children (`…Main`, `…Leaf`, `…Flower`). That node is the unit — not the bed and not the
+meshes — and there are about eighteen hundred of them.
+`Interactables ▸ Make The Plants Eatable` wires them for **[E] Eat**, taking the species from the
+material name (`Produce_Cornthin_Main` → corn), which survives anything anyone renames. Only the `…Main`
+part is eaten, so pulling a carrot takes the carrot and leaves the greens standing; it grows back on a
+timer, so a bed is never permanently stripped. Trees are off by default — a tree is scenery, and the
+apples on it are their own plants. Unlike `Make Selected Eatable`, the trigger goes **on the plant node
+rather than on an `InteractTrigger` child**: that convention exists so an object keeps its own layer and
+colliders, and a MeshGroup node has neither, so at this scale it would only add eighteen hundred
+GameObjects to guard against a conflict that cannot happen. Use the **cap** or the **spacing** if you
+would rather have a scattering of edible plants than a whole field of them.
+
+**The fountain.** `Water ▸ Make Fountain` builds a stone basin — a real `WaterBody`, so it uses the
+project's wave shader and bank collider and can be resized afterwards from the Inspector like any other
+water here — with jets, a spill off the tier, splash, ripples and mist. Two details are most of why it
+reads as water rather than as sparks:
+
+- **The arcs are solved, not eyeballed.** Given the jet speed and the spout's height above the pool,
+  exactly one tilt lands the stream at a given radius, so the tool bisects for it and sets each jet's
+  lifetime to the flight time it just computed. Droplets follow a real parabola and die *at the water
+  line*, instead of fading out in mid-air wherever the lifetime happened to run out. The window prints
+  the tilt, the time in the air, the peak height and the landing distance before you build, and warns
+  when the speed you asked for cannot reach the radius you asked for.
+- **Stretched billboards.** A droplet at speed is a streak, not a dot, so the jets and the spill render
+  in Stretch mode scaled by velocity — fast water elongates, slow water at the top of an arc goes back to
+  round. Ripples render as **horizontal** billboards, because the one thing a ripple must never do is
+  stand up and face the camera.
+
+The stone is deliberately **double-sided**: the basin the `WaterBody` generates is one surface — a floor
+and a wall sloping up and out — so its outside is a back face, and single-sided you would see straight
+through the fountain from anywhere below the rim. `Flow` on the `Fountain` component drives every
+emitter, the light and the audio at once; drag it to 0 and it winds down over a second and a half. Tick
+**Turn it on and off with E** if you want a prompt on it.
+
 **Why the scene was dark**, and what `Station ▸ Lighting` does about it: one directional light was
 lighting an entire moon base; the dome was **casting a shadow over its own contents** (a closed glass
 shell with shadow casting on is a very expensive lampshade); and with no baked GI nothing bounces, so
@@ -178,9 +383,9 @@ second: those lift everything at once, where another lamp only lifts one room.
 |---|---|
 | WASD + mouse | Walk / look (first person) |
 | Shift | Run · **Space** jump (tap = low hop, hold = full float) |
-| **E** | Interact — **swing a door open**, pick fruit, pat duck, **sit in a chair**, **call the elevator**, **launch the drone** (prompt appears within ~2 m) |
+| **E** | Interact — **swing a door open**, pick fruit, **eat a carrot**, pat duck **or fish**, **sit in a chair**, **call the elevator**, **launch the drone** (prompt appears within ~2 m) |
 | **E** (seated) | Stand up again |
-| **H** | Take the helmet off / put it back on (it also comes off by itself on walking inside) |
+| **H** | Take the helmet off early. One-way — once it is off it stays off, and it comes off by itself when you step into the trigger box |
 | **C** | Toggle first-person ↔ free-fly camera |
 | Fly cam | WASD + mouse, **Space/Ctrl** up/down, **Shift** fast, **scroll** = fly speed (your "zoom") |
 | 1–5, [ ] | Sim speed 1–16× (tractor/flowers only — you, doors, gas, water, ducks stay real-time) |
@@ -260,9 +465,10 @@ disk, so there is no mesh asset to keep in sync and no tool to re-run.
 - **Round ponds outside it** — `Water ▸ Add Round Pond Here` drops one at the Scene-view pivot; run it
   again for the next one. Same for a `WATER_` locator exported from Maya (`Create Water Body` →
   *At Selected WATER_ Marker*).
-- **Ducks and fish** live on the water body — set the counts in its Inspector and hit *Apply
-  population*, or use `Water ▸ Spawn Ducks & Fish`. Ducks ride the actual wave drawn under them and
-  lean with its slope; fish cruise the depth band with a tail waggle and the odd dart.
+- **Ducks, fish and lilypads** live on the water body — set the counts in its Inspector and hit *Apply
+  population*, or use `Water ▸ Spawn Ducks, Fish & Lilypads` for the size sliders as well. Ducks and
+  lilypads ride the actual wave drawn under them and lean with its slope; fish cruise the depth band
+  with a tail waggle and the odd dart.
 - **When the container model lands:** park the water body inside it, turn **Build Basin off** (the
   generated trench was only ever a stand-in for it), and pull the edges out until the sheet meets its
   walls. `Water ▸ Snap All Wildlife Into Water` puts everyone back in afterwards — resizing a pond can
@@ -350,6 +556,7 @@ Every sound moment already has an empty `AudioClip` slot — import a clip and d
 | Chamber gas hiss (looped) + the clunk when it seals | `PressureChambers/PressureChamber_…` → **Pressure Chamber → Hiss / Sealed Clip** |
 | Rotor loop (pitched and faded with the throttle) | `DronePad` → **Drone Flight → Rotor Loop** |
 | Duck quack (on pat) | each `Duck_XX` → **Water Wanderer → Quack Clip** |
+| Running water (looped, volume follows Flow) | `FOUNTAIN_XX` → **Fountain → Running Clip** |
 | Bite crunch | `Astronaut` → **Hand Action Controller → Bite Clip**, or per-object on **Eatable Object → Bite Clip** |
 | Pat thump | per-object on **Pettable Object → Pat Clip** |
 

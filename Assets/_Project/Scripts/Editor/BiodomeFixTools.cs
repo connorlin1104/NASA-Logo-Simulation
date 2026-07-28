@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -9,11 +10,12 @@ namespace NasaSim.EditorTools
     /// <summary>
     /// Repairs the imported Biodome instance.
     ///
-    /// <b>Fix Dome Glass</b> — the dome shell shipped with Unity's default opaque URP/Lit material
-    /// ("New Material": Surface Opaque, Render Face Front). A closed hull rendered single-sided shows
-    /// ONLY back faces to a camera inside it, so every triangle was culled and the dome vanished from
-    /// within — while reading as a solid grey wall from outside. The fix is a purpose-built glass
-    /// material: Surface Transparent + Render Face Both, low-alpha blue tint.
+    /// <b>Fix Dome Glass</b> — the dome shell arrives with an opaque, single-sided material (whether
+    /// Unity's default grey "New Material" or the FBX's own). A closed hull rendered single-sided shows
+    /// ONLY back faces to a camera inside it, so every triangle is culled and the dome vanishes from
+    /// within — while reading as a solid white wall from outside. The fix is a purpose-built glass
+    /// material: Surface Transparent + Render Face Both, low-alpha blue tint. See
+    /// <see cref="DomeGlassTool"/> for the same thing with the tint and opacity exposed.
     ///
     /// <b>Wire Colliders &amp; Spawn Outside</b> — runs the COL_/NOCOL_/STAIR_ prefix wiring on the dome
     /// (it had no colliders at all) and drops a SPAWN_Outside marker at the far mouth of COL_tunnel so
@@ -33,57 +35,116 @@ namespace NasaSim.EditorTools
 
         // ------------------------------------------------------------------ glass
 
+        /// <summary>Default glass tint: a pale blue at 10% opacity, which reads as glass without hazing
+        /// the view through it.</summary>
+        public static readonly Color DefaultTint = new Color(0.62f, 0.78f, 0.92f, 0.10f);
+
         [MenuItem("Tools/NASA Sim/Biodome/Fix Dome Glass")]
-        public static void FixDomeGlass()
+        public static void FixDomeGlass() => ApplyGlass(DefaultTint, 0.92f, true);
+
+        /// <summary>
+        /// Turn every dome shell in the scene into glass. Returns how many material slots changed.
+        ///
+        /// This works RENDERER-FIRST rather than finding a model root and sweeping it. The dome now
+        /// arrives as one mesh deep inside SettingEnvo, whose root also holds the plants, the tunnel, the
+        /// terrain and eight thousand other objects — a sweep from there would repaint half the scene.
+        /// </summary>
+        public static int ApplyGlass(Color tint, float smoothness, bool doubleSided)
         {
-            GameObject dome = FindBiodomeInstance();
-            if (dome == null)
+            var shells = FindShellRenderers();
+            if (shells.Count == 0)
             {
-                Debug.LogWarning("[BiodomeFix] No imported biodome found in the scene (looked for " +
-                                 "COL_tunnel / NOCOL_Dome children). Drag Biodome.fbx into the scene first.");
-                return;
+                Debug.LogWarning("[BiodomeFix] No dome shell found. Looked for a renderer whose name " +
+                                 "(Maya namespace stripped) contains 'dome' or 'biosphere' — e.g. " +
+                                 "'newGreenHouse_2:...:Biosphere2' or the older 'NOCOL_Dome'. Rename the " +
+                                 "shell to include one of those words, or select it and use " +
+                                 "Tools > NASA Sim > Biodome > Dome Glass.");
+                return 0;
             }
 
-            Material glass = CreateOrRefreshGlassMaterial();
+            Material glass = CreateOrRefreshGlassMaterial(tint, smoothness, doubleSided);
             var badGrey = AssetDatabase.LoadAssetAtPath<Material>(BadGreyMatPath);
+            int replacedSlots = 0;
 
-            Undo.RegisterFullObjectHierarchyUndo(dome, "Fix Dome Glass");
-            int replacedSlots = 0, shellRenderers = 0;
-
-            foreach (var r in dome.GetComponentsInChildren<Renderer>(true))
+            foreach (Renderer r in shells)
             {
-                bool isShell = r.name.ToLowerInvariant().Contains("dome") ||
-                               r.name.ToLowerInvariant().Contains("biosphere");
+                Undo.RecordObject(r, "Fix Dome Glass");
                 var mats = r.sharedMaterials;
-                bool changed = false;
-
                 for (int i = 0; i < mats.Length; i++)
-                {
-                    bool isBad = mats[i] == null ||
-                                 mats[i] == badGrey ||
-                                 mats[i].name == "New Material";
-                    if (isShell || isBad)
-                    {
-                        if (mats[i] != glass) { mats[i] = glass; replacedSlots++; changed = true; }
-                    }
-                }
+                    if (mats[i] != glass) { mats[i] = glass; replacedSlots++; }
+                r.sharedMaterials = mats;
+                // A glass dome must not plunge its own interior into shadow.
+                r.shadowCastingMode = ShadowCastingMode.Off;
+                EditorUtility.SetDirty(r);
+            }
 
-                if (changed) r.sharedMaterials = mats;
-                if (isShell)
+            // Unity's own default grey ("New Material") anywhere else is the same import accident and
+            // reads as the same solid white wall, so it goes too — but only where it is that exact asset.
+            if (badGrey != null)
+            {
+                foreach (Renderer r in Object.FindObjectsByType<Renderer>(FindObjectsInactive.Include))
                 {
-                    shellRenderers++;
-                    // A glass dome must not plunge its own interior into shadow.
-                    r.shadowCastingMode = ShadowCastingMode.Off;
+                    if (r is ParticleSystemRenderer) continue;
+                    var mats = r.sharedMaterials;
+                    bool changed = false;
+                    for (int i = 0; i < mats.Length; i++)
+                        if (mats[i] == badGrey) { mats[i] = glass; replacedSlots++; changed = true; }
+                    if (!changed) continue;
+                    Undo.RecordObject(r, "Fix Dome Glass");
+                    r.sharedMaterials = mats;
+                    EditorUtility.SetDirty(r);
                 }
             }
 
-            EditorSceneManager.MarkSceneDirty(dome.scene);
-            Debug.Log($"[BiodomeFix] Dome glass fixed on '{dome.name}': {replacedSlots} material slot(s) " +
-                      $"-> BiodomeGlass (transparent, double-sided), {shellRenderers} shell renderer(s) " +
-                      "no longer cast shadows. The dome is now visible from inside AND see-through from outside.", dome);
+            EditorSceneManager.MarkSceneDirty(shells[0].gameObject.scene);
+            Debug.Log($"[BiodomeFix] {shells.Count} dome shell renderer(s), {replacedSlots} material " +
+                      $"slot(s) -> BiodomeGlass (transparent" +
+                      (doubleSided ? ", double-sided" : "") + ", shadows off).\n  " +
+                      "Shell: " + string.Join(", ", ShellNames(shells)) + "\n  " +
+                      "It was opaque and single-sided, which is why it was a white wall from outside and " +
+                      "nothing at all from inside — a closed hull rendered single-sided shows the camera " +
+                      "inside it only back faces, and every one of those is culled.", shells[0]);
+            return replacedSlots;
         }
 
-        static Material CreateOrRefreshGlassMaterial()
+        /// <summary>
+        /// Every renderer that is part of a dome shell. Matched on the LEAF of the name with the Maya
+        /// namespace stripped, because every airlock part in this scene carries "BiodomeAirlockDoor1" in
+        /// its namespace and would otherwise match "dome" — turning the whole airlock into glass.
+        /// </summary>
+        public static List<Renderer> FindShellRenderers()
+        {
+            var found = new List<Renderer>();
+            foreach (Renderer r in Object.FindObjectsByType<Renderer>(FindObjectsInactive.Include))
+            {
+                if (r is ParticleSystemRenderer) continue;
+                if (IsShellName(r.name)) found.Add(r);
+            }
+            return found;
+        }
+
+        /// <summary>"newGreenHouse_2:_sh01_connor_anim_v002:Biosphere2" -> yes. "…:BiodomeAirlockDoor1:Leg" -> no.</summary>
+        public static bool IsShellName(string rawName)
+        {
+            string leaf = Leaf(rawName).ToLowerInvariant();
+            if (leaf.Contains("airlock") || leaf.Contains("door") || leaf.Contains("hatch")) return false;
+            return leaf.Contains("biosphere") || leaf.Contains("dome");
+        }
+
+        /// <summary>Drop the Maya namespaces: everything up to and including the last colon.</summary>
+        public static string Leaf(string name)
+        {
+            int c = name.LastIndexOf(':');
+            return c >= 0 && c < name.Length - 1 ? name.Substring(c + 1) : name;
+        }
+
+        static IEnumerable<string> ShellNames(List<Renderer> shells)
+        {
+            var seen = new HashSet<string>();
+            foreach (Renderer r in shells) if (seen.Add(Leaf(r.name))) yield return Leaf(r.name);
+        }
+
+        public static Material CreateOrRefreshGlassMaterial(Color tint, float smoothness, bool doubleSided)
         {
             var mat = AssetDatabase.LoadAssetAtPath<Material>(GlassMatPath);
             if (mat == null)
@@ -100,16 +161,18 @@ namespace NasaSim.EditorTools
             mat.SetFloat("_SrcBlendAlpha", (float)BlendMode.One);
             mat.SetFloat("_DstBlendAlpha", (float)BlendMode.OneMinusSrcAlpha);
             mat.SetFloat("_ZWrite", 0f);
-            mat.SetFloat("_Cull", (float)CullMode.Off);                       // Render Face Both — THE fix
+            // Render Face Both — THE fix for "I can't see it from inside".
+            mat.SetFloat("_Cull", (float)(doubleSided ? CullMode.Off : CullMode.Back));
             mat.SetFloat("_AlphaClip", 0f);
             mat.SetFloat("_Metallic", 0f);
-            mat.SetFloat("_Smoothness", 0.92f);
-            mat.SetColor("_BaseColor", new Color(0.62f, 0.78f, 0.92f, 0.10f));
+            mat.SetFloat("_Smoothness", smoothness);
+            mat.SetColor("_BaseColor", tint);
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", tint);
             mat.SetOverrideTag("RenderType", "Transparent");
             mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
             mat.DisableKeyword("_ALPHATEST_ON");
             mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
-            mat.doubleSidedGI = true;
+            mat.doubleSidedGI = doubleSided;
             // _QueueOffset backs the forced queue: URP's inspector validation recomputes the queue as
             // Transparent(3000) + offset on any hand-edit, and the water < gas < glass order must survive.
             if (mat.HasProperty("_QueueOffset"))

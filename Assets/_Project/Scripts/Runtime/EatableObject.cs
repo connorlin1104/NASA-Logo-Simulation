@@ -51,6 +51,25 @@ namespace NasaSim
                  "0 measures it from the renderers.")]
         [Min(0f)] public float grabRadius = 0f;
 
+        [Header("Plucking")]
+        [Tooltip("It is attached to something — soil, a stalk, a branch. The hand loads up against that " +
+                 "and it lets go with a snap, instead of the snack sliding out of the world into the palm.")]
+        public bool pluck = true;
+        [Tooltip("Which way it comes free, in the object's own space. Up pulls a carrot out of the ground; " +
+                 "down snaps an apple off its branch.")]
+        public Vector3 pluckDirection = Vector3.up;
+        [Tooltip("How far it travels breaking free, in metres. For a carrot this is how much of it was " +
+                 "buried, so the whole root clears the soil.")]
+        [Min(0f)] public float pluckDistance = 0.14f;
+        [Min(0.05f)] public float pluckSeconds = 0.62f;
+        [Tooltip("Held up and slowly turned before the first bite. This is the shot — set it to 0 to go " +
+                 "straight to eating.")]
+        [Min(0f)] public float inspectSeconds = 1.3f;
+        [Tooltip("Colour of the puff thrown out as it comes free: soil for a root, leaf litter for a " +
+                 "stem. Alpha 0 falls back to the crumb colour.")]
+        public Color pluckDebrisColor = new Color(0f, 0f, 0f, 0f);
+        public AudioClip pluckClip;
+
         [Header("When it's finished")]
         public WhenFinished whenFinished = WhenFinished.Respawn;
         [Min(0f)] public float respawnSeconds = 30f;
@@ -80,6 +99,23 @@ namespace NasaSim
         public float GrabRadius => grabRadius > 0f ? grabRadius : _measuredRadius;
 
         public Color DebrisColor => debrisColor.a > 0f ? debrisColor : _sampledColor;
+
+        public Color PluckDebrisColor => pluckDebrisColor.a > 0f ? pluckDebrisColor : DebrisColor;
+
+        /// <summary>Which way it comes free, in world space — so it still reads right on a plant that
+        /// was dropped in at any angle.</summary>
+        public Vector3 PluckAxis
+        {
+            get
+            {
+                Vector3 local = pluckDirection.sqrMagnitude > 1e-6f ? pluckDirection : Vector3.up;
+                Vector3 world = Body.TransformDirection(local);
+                return world.sqrMagnitude > 1e-8f ? world.normalized : Vector3.up;
+            }
+        }
+
+        /// <summary>Worth animating a pull for: it is rooted, and it actually travels.</summary>
+        public bool ShouldPluck => pluck && pluckDistance > 0.001f;
 
         public string Prompt => !string.IsNullOrEmpty(promptOverride) ? promptOverride : $"[E] {verb} {Label}";
 

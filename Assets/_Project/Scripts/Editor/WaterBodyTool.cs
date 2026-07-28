@@ -34,6 +34,7 @@ namespace NasaSim.EditorTools
         bool buildBasin = true;
         int ducks = 3;
         int fish = 8;
+        int lilypads = 6;
 
         const string WaterMatPath = "Assets/_Project/Materials/Water.mat";
         const string MudMatPath = "Assets/_Project/Materials/MudBasin.mat";
@@ -48,7 +49,8 @@ namespace NasaSim.EditorTools
         void OnGUI()
         {
             EditorGUILayout.HelpBox(
-                "Places a water body — the moat, or a pond — and stocks it with ducks and fish.\n\n" +
+                "Places a water body — the moat, or a pond — and stocks it with ducks, fish and " +
+                "lilypads.\n\n" +
                 "Nothing here is baked: every number is live on the WaterBody component afterwards, so " +
                 "resize it in the Inspector (or drag its handles in the Scene view) to fit the container " +
                 "model when it lands.", MessageType.Info);
@@ -97,6 +99,10 @@ namespace NasaSim.EditorTools
             EditorGUILayout.Space();
             ducks = EditorGUILayout.IntSlider("Ducks", ducks, 0, 20);
             fish = EditorGUILayout.IntSlider("Fish", fish, 0, 40);
+            lilypads = EditorGUILayout.IntSlider("Lilypads", lilypads, 0, 40);
+            EditorGUILayout.LabelField(
+                " ", "Built from Duck.fbx / Fish.fbx / Lilypad.fbx when those are in the project, and " +
+                     "from primitives when they are not.", EditorStyles.wordWrappedMiniLabel);
 
             EditorGUILayout.Space();
             if (GUILayout.Button("Build / Update Water Body", GUILayout.Height(30f)))
@@ -117,17 +123,19 @@ namespace NasaSim.EditorTools
             {
                 case Preset.SquareMoatAroundGrass:
                     Select(BuildSquareMoat(moatGap, bandWidth, cornerRadius, depth, surfaceY,
-                                           density, buildBasin, ducks, fish));
+                                           density, buildBasin, ducks, fish, lilypads));
                     break;
 
                 case Preset.RoundPondAtSceneViewPivot:
                     Select(BuildPond(NextPondName(), ScenePivot(), WaterBody.Shape.Circle, pondRadius,
-                                     pondSize, depth, surfaceY, density, buildBasin, ducks, fish));
+                                     pondSize, depth, surfaceY, density, buildBasin, ducks, fish,
+                                     lilypads));
                     break;
 
                 case Preset.RectPondAtSceneViewPivot:
                     Select(BuildPond(NextPondName(), ScenePivot(), WaterBody.Shape.Box, pondRadius,
-                                     pondSize, depth, surfaceY, density, buildBasin, ducks, fish));
+                                     pondSize, depth, surfaceY, density, buildBasin, ducks, fish,
+                                     lilypads));
                     break;
 
                 case Preset.AtSelectedWaterMarker:
@@ -141,7 +149,8 @@ namespace NasaSim.EditorTools
                         return;
                     }
                     Select(BuildPond(marker.name, marker.position, WaterBody.Shape.Box, pondRadius,
-                                     pondSize, depth, surfaceY, density, buildBasin, ducks, fish));
+                                     pondSize, depth, surfaceY, density, buildBasin, ducks, fish,
+                                     lilypads));
                     break;
                 }
             }
@@ -157,12 +166,12 @@ namespace NasaSim.EditorTools
 
         [MenuItem("Tools/NASA Sim/Water/Add Square Moat Around Grass")]
         public static void AddSquareMoatMenu() =>
-            Select(BuildSquareMoat(0.5f, 3.5f, 0f, 0.8f, -0.12f, 2f, true, 3, 8));
+            Select(BuildSquareMoat(0.5f, 3.5f, 0f, 0.8f, -0.12f, 2f, true, 3, 8, 6));
 
         [MenuItem("Tools/NASA Sim/Water/Add Round Pond Here")]
         public static void AddRoundPondMenu() =>
             Select(BuildPond(NextPondName(), ScenePivot(), WaterBody.Shape.Circle, 6f,
-                             new Vector2(8f, 8f), 0.8f, -0.12f, 2f, true, 2, 4));
+                             new Vector2(8f, 8f), 0.8f, -0.12f, 2f, true, 2, 4, 4));
 
         [MenuItem("Tools/NASA Sim/Water/Snap All Wildlife Into Water")]
         public static void SnapAllWildlife()
@@ -181,13 +190,14 @@ namespace NasaSim.EditorTools
         }
 
         /// <summary>Programmatic default for the full-vision setup chain.</summary>
-        public static void BuildMoatDefault() => BuildSquareMoat(0.5f, 3.5f, 0f, 0.8f, -0.12f, 2f, true, 3, 8);
+        public static void BuildMoatDefault() =>
+            BuildSquareMoat(0.5f, 3.5f, 0f, 0.8f, -0.12f, 2f, true, 3, 8, 6);
 
         // ------------------------------------------------------------------ builders
 
         public static GameObject BuildSquareMoat(float gap, float band, float corner, float depth,
                                                  float surfaceY, float density, bool basin,
-                                                 int ducks, int fish)
+                                                 int ducks, int fish, int lilypads = 6)
         {
             Bounds grass = GrassPatchBounds();
             var go = FindOrCreateRoot("WATER_Moat");
@@ -199,7 +209,7 @@ namespace NasaSim.EditorTools
             body.innerSize = new Vector2(grass.size.x, grass.size.z) + Vector2.one * (gap * 2f);
             body.bandWidth = band;
             body.cornerRadius = corner;
-            Finish(body, ducks, fish);
+            Finish(body, ducks, fish, lilypads);
 
             Debug.Log($"[Water] Square moat around a {grass.size.x:0.#} x {grass.size.z:0.#} m grass " +
                       $"patch: water from {body.innerSize.x:0.#} m to " +
@@ -211,7 +221,8 @@ namespace NasaSim.EditorTools
 
         public static GameObject BuildPond(string name, Vector3 center, WaterBody.Shape shape,
                                            float radius, Vector2 size, float depth, float surfaceY,
-                                           float density, bool basin, int ducks, int fish)
+                                           float density, bool basin, int ducks, int fish,
+                                           int lilypads = 4)
         {
             var go = FindOrCreateRoot(name);
             // surfaceY is an OFFSET from the source height, so a WATER_ marker on elevated ground
@@ -222,11 +233,12 @@ namespace NasaSim.EditorTools
             body.shape = shape;
             body.radius = radius;
             body.boxSize = new Vector3(size.x, 0f, size.y);
-            Finish(body, ducks, fish);
+            Finish(body, ducks, fish, lilypads);
 
             Debug.Log($"[Water] '{name}': " +
                       (shape == WaterBody.Shape.Circle ? $"{radius:0.#} m round pond" : $"{size.x:0.#} x {size.y:0.#} m pond") +
-                      $", {depth:0.##} m deep, {ducks} duck(s) and {fish} fish. Drag it anywhere — the " +
+                      $", {depth:0.##} m deep, {ducks} duck(s), {fish} fish and {lilypads} lilypad(s). " +
+                      "Drag it anywhere — the " +
                       "wildlife is parented to it.", go);
             return go;
         }
@@ -251,10 +263,10 @@ namespace NasaSim.EditorTools
             return body;
         }
 
-        static void Finish(WaterBody body, int ducks, int fish)
+        static void Finish(WaterBody body, int ducks, int fish, int lilypads)
         {
             body.Rebuild();
-            WildlifeSpawnTool.Spawn(body, ducks, fish, quiet: true);
+            WildlifeSpawnTool.Spawn(body, ducks, fish, lilypads, true, false, quiet: true);
             body.SnapWildlifeInside();
             EditorUtility.SetDirty(body);
             EditorSceneManager.MarkSceneDirty(body.gameObject.scene);

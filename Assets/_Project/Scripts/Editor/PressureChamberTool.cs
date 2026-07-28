@@ -29,10 +29,13 @@ namespace NasaSim.EditorTools
         [SerializeField] GameObject _chamber;
         [SerializeField] float _interiorFit = 0.68f;
         [SerializeField] float _heightFit = 0.80f;
-        [SerializeField] float _fillSeconds = 5f;
+        [SerializeField] float _fillSeconds = 3.5f;
         [SerializeField] float _ventSeconds = 3.5f;
-        [SerializeField] float _sealDelay = 0.6f;
+        [SerializeField] float _sealDelay = 0.5f;
         [SerializeField] bool _addLight = true;
+        [SerializeField] bool _snapColour = true;
+        [SerializeField] bool _tintGas = true;
+        [SerializeField] float _lightIntensity = 5f;
         [SerializeField] int _jetCount = 4;
 
         readonly List<Transform> _candidates = new List<Transform>();
@@ -107,6 +110,12 @@ namespace NasaSim.EditorTools
             _sealDelay = EditorGUILayout.Slider(new GUIContent("Seal delay"), _sealDelay, 0f, 3f);
             _fillSeconds = EditorGUILayout.Slider(new GUIContent("Fill"), _fillSeconds, 1f, 20f);
             _ventSeconds = EditorGUILayout.Slider(new GUIContent("Vent"), _ventSeconds, 1f, 20f);
+            EditorGUILayout.HelpBox(
+                $"Walk in and the room stays RED for {_sealDelay + _fillSeconds:0.0} s " +
+                $"({_sealDelay:0.0} s sealing, then {_fillSeconds:0.0} s of gas), then snaps GREEN.\n" +
+                "The helmet comes off on that same instant if 'Wait for the gas chamber' is ticked on " +
+                "Tools > NASA Sim > Station > Helmet Off Inside.",
+                MessageType.None);
 
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Fittings", EditorStyles.boldLabel);
@@ -114,9 +123,24 @@ namespace NasaSim.EditorTools
                 new GUIContent("Corner vents", "Jets that puff only while the pressure is changing."),
                 _jetCount, 0, 8);
             _addLight = EditorGUILayout.Toggle(
-                new GUIContent("Status lamp", "A point light that runs red → green with the pressure and " +
-                                              "pulses while gas is moving."),
+                new GUIContent("Status lamps", "Two point lights, one high and one low, so the whole room " +
+                                               "takes the colour instead of just the ceiling."),
                 _addLight);
+            using (new EditorGUI.DisabledScope(!_addLight))
+                _lightIntensity = EditorGUILayout.Slider(
+                    new GUIContent("Lamp brightness", "How hard the room is washed with the status " +
+                                                      "colour. High enough to be unmistakable on camera."),
+                    _lightIntensity, 0.5f, 12f);
+            _snapColour = EditorGUILayout.Toggle(
+                new GUIContent("Snap red → green",
+                               "Hold red for the whole cycle and flip at the end. Off cross-fades, which " +
+                               "spends most of the wait looking orange and gives the answer away early."),
+                _snapColour);
+            _tintGas = EditorGUILayout.Toggle(
+                new GUIContent("Colour the gas too",
+                               "Dyes the vapour with the status colour. This is what makes the ROOM read " +
+                               "red rather than one lamp on the ceiling."),
+                _tintGas);
 
             EditorGUILayout.Space();
             using (new EditorGUI.DisabledScope(_chamber == null))
@@ -234,12 +258,18 @@ namespace NasaSim.EditorTools
             chamber.fillSeconds = _fillSeconds;
             chamber.ventSeconds = _ventSeconds;
             chamber.sealDelay = _sealDelay;
+            chamber.snapColour = _snapColour;
+            chamber.tintTheGas = _tintGas;
+            chamber.lightIntensity = _lightIntensity;
 
             Material gasMat = AirlockBuilderTool.MakeGasMaterial();
 
             chamber.jets = BuildJets(host.transform, b.center, size, gasMat);
             chamber.fog = BuildFog(host.transform, b.center, size, gasMat);
-            chamber.statusLight = _addLight ? BuildLamp(host.transform, b.center, size) : null;
+
+            Light[] lamps = _addLight ? BuildLamps(host.transform, b.center, size) : new Light[0];
+            chamber.statusLight = lamps.Length > 0 ? lamps[0] : null;
+            chamber.statusLights = lamps;
 
             EditorUtility.SetDirty(chamber);
             EditorSceneManager.MarkSceneDirty(host.scene);
@@ -249,10 +279,15 @@ namespace NasaSim.EditorTools
                       $"  Room {size.x:0.0} × {size.y:0.0} × {size.z:0.0} m at " +
                       $"({b.center.x:0.0}, {b.center.y:0.0}, {b.center.z:0.0}), " +
                       $"{(chamber.jets != null ? chamber.jets.Length : 0)} corner vent(s)" +
-                      (chamber.statusLight != null ? " and a status lamp" : string.Empty) + ".\n" +
+                      (lamps.Length > 0 ? $" and {lamps.Length} status lamp(s)" : string.Empty) + ".\n" +
                       $"  Seals for {_sealDelay:0.0} s, fills over {_fillSeconds:0.0} s, vents over " +
                       $"{_ventSeconds:0.0} s — all real seconds, so the 16× sim speed does not rush it.\n" +
-                      "  Walk in to start it. Nothing is wired to the doors, so it cannot trap you.",
+                      $"  The room holds RED for {chamber.SecondsToGreen:0.0} s from the moment you step " +
+                      "in, then snaps GREEN" +
+                      (_tintGas ? " — lamps and gas together." : ".") + "\n" +
+                      "  Walk in to start it. Nothing is wired to the doors, so it cannot trap you.\n" +
+                      "  To have the helmet wait for it: Tools > NASA Sim > Station > Helmet Off Inside, " +
+                      "tick 'Wait for the gas chamber', build.",
                       host);
         }
 
@@ -304,18 +339,40 @@ namespace NasaSim.EditorTools
             return fog;
         }
 
-        static Light BuildLamp(Transform parent, Vector3 centre, Vector3 size)
+        /// <summary>
+        /// Two lamps, not one. A single point light near the ceiling lights the ceiling; the floor, the
+        /// walls at eye height and the astronaut standing in the middle all stay their normal colour, and
+        /// "the room turns red" becomes "there is a red bulb up there". One high and one low, each with a
+        /// range that reaches the far corner, washes the whole volume.
+        /// </summary>
+        Light[] BuildLamps(Transform parent, Vector3 centre, Vector3 size)
         {
-            var go = StationBuild.FindOrCreateChild(parent, "StatusLamp");
+            // The far corner, so nothing in the room falls outside the falloff.
+            float reach = new Vector3(size.x, size.y, size.z).magnitude * 0.75f;
+
+            return new[]
+            {
+                BuildLamp(parent, "StatusLamp_High",
+                          new Vector3(centre.x, centre.y + size.y * 0.36f, centre.z), reach),
+                BuildLamp(parent, "StatusLamp_Low",
+                          new Vector3(centre.x, centre.y - size.y * 0.32f, centre.z), reach),
+            };
+        }
+
+        Light BuildLamp(Transform parent, string name, Vector3 position, float range)
+        {
+            var go = StationBuild.FindOrCreateChild(parent, name);
             Undo.RecordObject(go.transform, "Build pressure chamber");
-            go.transform.SetPositionAndRotation(
-                new Vector3(centre.x, centre.y + size.y * 0.36f, centre.z), Quaternion.identity);
+            go.transform.SetPositionAndRotation(position, Quaternion.identity);
 
             var light = StationBuild.GetOrAdd<Light>(go);
             Undo.RecordObject(light, "Build pressure chamber");
             light.type = LightType.Point;
-            light.range = Mathf.Max(size.x, size.z) * 1.4f;
-            light.intensity = 2.5f;
+            light.range = range;
+            light.intensity = _lightIntensity;
+            // No shadows: two overlapping point lights casting real-time shadows in a corridor full of
+            // pipework costs more than the whole rest of this feature, and the room is lit by them
+            // uniformly anyway — there is nothing for a shadow to explain.
             light.shadows = LightShadows.None;
             return light;
         }

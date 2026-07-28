@@ -25,6 +25,11 @@ namespace NasaSim
     /// fading in everywhere at once. The jets only run while the pressure is actually changing, which is
     /// what makes the still moment at the end read as "pressurized" rather than "still filling".
     ///
+    /// <b>Red, then green — never orange.</b> The lamps AND the gas itself carry the status colour, and
+    /// it is held at red for the whole cycle and flipped on completion rather than cross-faded. See
+    /// <see cref="snapColour"/> for why. <see cref="IsPressurized"/> is the same instant the light turns,
+    /// which is what <see cref="HelmetRemoval"/> waits on.
+    ///
     /// Unscaled time throughout: the sim fast-forwards the mow to 16x, and a 5-second pressurization that
     /// tracked it would be over in a third of a second.
     /// </summary>
@@ -41,10 +46,13 @@ namespace NasaSim
         [Min(0f)] public float exitMargin = 0.4f;
 
         [Header("Timing (real seconds, immune to sim fast-forward)")]
-        [Min(0.5f)] public float fillSeconds = 5f;
+        [Min(0.5f)] public float fillSeconds = 3.5f;
         [Min(0.5f)] public float ventSeconds = 3.5f;
         [Tooltip("Wait this long after you step in before the gas starts, as if a hatch were sealing.")]
-        [Min(0f)] public float sealDelay = 0.6f;
+        [Min(0f)] public float sealDelay = 0.5f;
+
+        /// <summary>Seconds from stepping in to the lamp going green — what the player actually counts.</summary>
+        public float SecondsToGreen => sealDelay + fillSeconds;
 
         [Header("Gas")]
         [Tooltip("Corner vents. They puff only while the pressure is CHANGING.")]
@@ -52,12 +60,35 @@ namespace NasaSim
         [Tooltip("The haze filling the room. Its emitter box rises with the pressure.")]
         public ParticleSystem fog;
         [Min(0f)] public float fogRateAtFull = 26f;
+        [Tooltip("Colour the gas itself with the status colour, so the room fills with red and then " +
+                 "turns green. Off leaves it plain white vapour.")]
+        public bool tintTheGas = true;
 
         [Header("Status light")]
+        [Tooltip("The main lamp. Anything else that should match goes in the list below.")]
         public Light statusLight;
-        public Color vacuumColor = new Color(1f, 0.35f, 0.25f);
-        public Color pressurizedColor = new Color(0.45f, 1f, 0.55f);
-        [Min(0f)] public float lightIntensity = 2.5f;
+        [Tooltip("More lamps on the same colour — the builder puts one high and one low so the whole " +
+                 "room takes the colour rather than just the ceiling.")]
+        public Light[] statusLights;
+        public Color vacuumColor = new Color(1f, 0.22f, 0.16f);
+        public Color pressurizedColor = new Color(0.30f, 1f, 0.42f);
+        [Min(0f)] public float lightIntensity = 5f;
+
+        /// <summary>
+        /// Hold the vacuum colour the whole way up and then FLIP. Blending red into green over four
+        /// seconds spends most of that time in muddy orange, which reads as a broken lamp rather than as
+        /// a room that is not safe yet — and it gives away the answer before the cycle has finished.
+        /// The eye wants a light that says one thing, then says the other.
+        /// </summary>
+        [Tooltip("Stay red until it is actually pressurized, then snap to green. Off cross-fades, which " +
+                 "spends most of the cycle looking orange.")]
+        public bool snapColour = true;
+
+        [Tooltip("A brief flare at the moment it flips, so you catch the change even if you are not " +
+                 "looking at the lamp. Seconds.")]
+        [Min(0f)] public float flashSeconds = 0.45f;
+        [Min(1f)] public float flashIntensityMultiplier = 3f;
+
         [Tooltip("Renderers whose emission colour follows the status light — wall lamps, gauge faces.")]
         public Renderer[] statusPanels;
 
@@ -79,9 +110,17 @@ namespace NasaSim
         public State CurrentState { get; private set; } = State.Vacuum;
         public bool PlayerInside { get; private set; }
 
+        /// <summary>
+        /// Safe to breathe. This is what the helmet waits on — a plain "is it finished", not a threshold
+        /// somebody has to guess at, so the light turning green and the helmet coming off are the same
+        /// event rather than two things that happen to line up.
+        /// </summary>
+        public bool IsPressurized => Pressure01 >= 1f;
+
         AstronautController _astronaut;
         MaterialPropertyBlock _mpb;
         float _sealTimer;
+        float _flashTimer;
         static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
 
         void Start()
@@ -94,6 +133,7 @@ namespace NasaSim
         void Update()
         {
             float dt = Time.unscaledDeltaTime;
+            if (_flashTimer > 0f) _flashTimer -= dt;
 
             bool wasInside = PlayerInside;
             PlayerInside = Contains(ProbePoint(), wasInside ? exitMargin : 0f);
@@ -114,6 +154,7 @@ namespace NasaSim
                     if (Pressure01 >= 1f)
                     {
                         CurrentState = State.Pressurized;
+                        _flashTimer = flashSeconds;
                         Play(sealedClip);
                         onPressurized?.Invoke();
                     }
@@ -158,10 +199,35 @@ namespace NasaSim
             foreach (ParticleSystem ps in jets)
             {
                 if (ps == null) continue;
+                Tint(ps);
                 if (on && !ps.isEmitting) ps.Play(true);
                 else if (!on && ps.isEmitting) ps.Stop(true, ParticleSystemStopBehavior.StopEmitting);
             }
         }
+
+        /// <summary>
+        /// Dye the gas with the status colour. This is what actually makes the ROOM read red rather than
+        /// one lamp on the ceiling: the vapour is the biggest thing in there, and a red haze filling the
+        /// space says "not yet" far louder than a light does.
+        ///
+        /// The alpha is left alone — that belongs to the gas material's own look, and overwriting it with
+        /// an opaque status colour would turn the haze into smoke.
+        /// </summary>
+        void Tint(ParticleSystem ps)
+        {
+            if (!tintTheGas || ps == null) return;
+            ParticleSystem.MainModule main = ps.main;
+            Color want = StatusColor();
+            Color have = main.startColor.color;
+            if (Mathf.Abs(have.r - want.r) + Mathf.Abs(have.g - want.g) + Mathf.Abs(have.b - want.b) < 0.004f)
+                return;
+            main.startColor = new Color(want.r, want.g, want.b, have.a);
+        }
+
+        /// <summary>Red or green — or, with the snap off, the blend between them.</summary>
+        Color StatusColor() =>
+            snapColour ? (IsPressurized ? pressurizedColor : vacuumColor)
+                       : Color.Lerp(vacuumColor, pressurizedColor, Pressure01);
 
         /// <summary>
         /// The fog's emitter box is resized and re-seated every frame so its TOP tracks the pressure: at
@@ -181,6 +247,7 @@ namespace NasaSim
             }
 
             if (!fog.isEmitting) fog.Play(true);
+            Tint(fog);
 
             ParticleSystem.EmissionModule emission = fog.emission;
             emission.rateOverTime = fogRateAtFull * Mathf.Max(0.15f, p);
@@ -194,17 +261,23 @@ namespace NasaSim
 
         void DriveLight()
         {
-            Color c = Color.Lerp(vacuumColor, pressurizedColor, Pressure01);
+            Color c = StatusColor();
 
-            if (statusLight != null)
-            {
-                statusLight.color = c;
-                // A pulse while gas moves, steady at either end — the eye reads the flicker as "working"
-                // without needing a gauge to look at.
-                bool moving = CurrentState == State.Pressurizing || CurrentState == State.Venting;
-                float pulse = moving ? 0.72f + 0.28f * Mathf.Sin(Time.unscaledTime * 7f) : 1f;
-                statusLight.intensity = lightIntensity * pulse;
-            }
+            // A pulse while gas moves, steady at either end — the eye reads the flicker as "working"
+            // without needing a gauge to look at.
+            bool moving = CurrentState == State.Pressurizing || CurrentState == State.Venting;
+            float pulse = moving ? 0.72f + 0.28f * Mathf.Sin(Time.unscaledTime * 7f) : 1f;
+
+            // The flare on the changeover, easing back down to normal. It has to be an ADDITION on top
+            // of the pulse rather than a replacement, or the lamp would visibly stop breathing for half
+            // a second before it flashed.
+            if (_flashTimer > 0f && flashSeconds > 0f)
+                pulse += (flashIntensityMultiplier - 1f) * (_flashTimer / flashSeconds);
+
+            float intensity = lightIntensity * pulse;
+            Apply(statusLight, c, intensity);
+            if (statusLights != null)
+                foreach (Light l in statusLights) Apply(l, c, intensity);
 
             if (statusPanels == null || statusPanels.Length == 0) return;
             _mpb ??= new MaterialPropertyBlock();
@@ -215,6 +288,13 @@ namespace NasaSim
                 _mpb.SetColor(EmissionColorId, c * Mathf.LinearToGammaSpace(1.4f));
                 r.SetPropertyBlock(_mpb);
             }
+        }
+
+        static void Apply(Light light, Color color, float intensity)
+        {
+            if (light == null) return;
+            light.color = color;
+            light.intensity = intensity;
         }
 
         void DriveHiss(bool moving)
@@ -283,8 +363,8 @@ namespace NasaSim
 #if UNITY_EDITOR
             UnityEditor.Handles.color = new Color(0.55f, 0.85f, 1f);
             string label = Application.isPlaying
-                ? $"{CurrentState} · {Pressure01 * 100f:0}%"
-                : "gas fills in here (preview at 45%)";
+                ? $"{CurrentState} · {Pressure01 * 100f:0}% · {(IsPressurized ? "GREEN" : "red")}"
+                : $"gas fills in here (preview at 45%) — green after {SecondsToGreen:0.0} s";
             UnityEditor.Handles.Label(
                 transform.TransformPoint(center + Vector3.up * (size.y * 0.5f + 0.3f)), label);
 #endif

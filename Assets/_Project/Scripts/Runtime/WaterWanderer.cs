@@ -13,6 +13,10 @@ namespace NasaSim
     /// quack hook). <b>Fish</b> — cruises a depth band below the surface with a tail-driven waggle, and
     /// occasionally darts.
     ///
+    /// <b>Lilypad</b> — floats like a duck but does not swim: it turns on the spot and creeps with the
+    /// current, so a pond full of them drifts instead of sitting frozen. It shares the duck's float code
+    /// on purpose; a pad that ignored the swell while the ducks rode it would give the wave away.
+    ///
     /// Whatever the shape of the water is, they stay in it: the wander target is drawn from inside the
     /// body, every step is clamped back into it, and anything that finds itself on dry land — the usual
     /// result of resizing a pond around it — is put back on <see cref="Start"/>.
@@ -23,7 +27,9 @@ namespace NasaSim
     [DisallowMultipleComponent]
     public sealed class WaterWanderer : MonoBehaviour
     {
-        public enum Mode { Duck, Fish }
+        // Appended, never reordered: scenes serialise the enum by index, so inserting Lilypad anywhere
+        // but the end would turn every saved fish into a lilypad.
+        public enum Mode { Duck, Fish, Lilypad }
 
         [Header("Wander")]
         public Mode mode = Mode.Duck;
@@ -64,6 +70,12 @@ namespace NasaSim
         [Min(1f)] public float dartSpeedMul = 2.5f;
         [Min(0.1f)] public float dartSeconds = 1.2f;
 
+        [Header("Lilypad")]
+        [Tooltip("How fast it turns on the spot (deg/sec). Slow — a pad rotates, it does not steer.")]
+        [Range(-20f, 20f)] public float spinDegPerSec = 3f;
+        [Tooltip("How far it creeps with the current (m/sec). Tiny; it is drift, not swimming.")]
+        [Min(0f)] public float driftSpeed = 0.04f;
+
         [Header("Pat reaction (ducks)")]
         [Min(0.5f)] public float patReactSeconds = 2.5f;
         public UnityEvent onPatted;
@@ -99,6 +111,23 @@ namespace NasaSim
         {
             float dt = Time.unscaledDeltaTime;
             if (dt <= 0f || water == null) return;
+
+            if (mode == Mode.Lilypad)
+            {
+                // No target, no arrival, no pause: a pad turns where it is and slides with the current.
+                _yaw += spinDegPerSec * dt;
+                if (driftSpeed > 0f)
+                {
+                    // The drift heading weaves on the same slow sine the others sway on, so a raft of
+                    // pads all lean the same way at once — which is what a current looks like.
+                    float heading = Mathf.Sin((Time.unscaledTime + _phase) * swayFrequency * Mathf.PI) * 180f;
+                    Vector3 current = Quaternion.Euler(0f, heading, 0f) * Vector3.forward;
+                    transform.position = water.ClampInside(transform.position + current * (driftSpeed * dt),
+                                                           bankMargin);
+                }
+                ApplyFloat(dt);
+                return;
+            }
 
             if (_reactTimer > 0f)
             {
@@ -149,7 +178,8 @@ namespace NasaSim
             Vector3 p = transform.position;
             float surface = water.SurfaceHeightAt(p);
 
-            if (mode == Mode.Duck)
+            // Ducks and lilypads both sit ON the water and lean with it; only fish live under it.
+            if (mode != Mode.Fish)
             {
                 float bob = Mathf.Sin((Time.unscaledTime + _phase) * bobFrequency * Mathf.PI * 2f) * bobAmplitude;
                 p.y = surface - floatDepth + bob;

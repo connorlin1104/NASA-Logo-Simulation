@@ -55,6 +55,18 @@ namespace NasaSim
         [Tooltip("How long each bite's shrink takes to snap into place.")]
         [Min(0.02f)] public float biteSnapSeconds = 0.18f;
 
+        [Header("Pluck & inspect")]
+        [Tooltip("How far the hand presses INTO the plant while it strains against the roots, in " +
+                 "multiples of the arm's reach. This is what makes the pull look like it costs something.")]
+        [Range(0f, 0.3f)] public float pluckLoad = 0.07f;
+        [Tooltip("How far past the snack the hand carries on at the moment it lets go.")]
+        [Range(0f, 0.4f)] public float pluckSnap = 0.12f;
+        [Tooltip("Degrees a second the snack turns while it is held up to be looked at.")]
+        public float inspectSpinDegPerSec = 66f;
+        [Tooltip("How far toward the visor it is brought for that look. 0 is the normal carry pose, " +
+                 "1 is right up against the lens.")]
+        [Range(0f, 1f)] public float inspectCloseness = 0.35f;
+
         [Header("Pet timing (real seconds)")]
         [Min(0.05f)] public float petReachSeconds = 0.32f;
         [Min(0.05f)] public float petSettleSeconds = 0.32f;
@@ -67,7 +79,9 @@ namespace NasaSim
         public AudioClip biteClip;
 
         enum Act { Idle, Eat, Pet }
-        enum Step { Reach, Bring, Bites, Pats, Settle }
+        // Pluck and Inspect are appended rather than slotted in between Reach and Bring where they belong
+        // in the sequence, to keep the habit the serialized enums in this project have to follow.
+        enum Step { Reach, Bring, Bites, Pats, Settle, Pluck, Inspect }
 
         public bool IsBusy => _act != Act.Idle;
 
@@ -175,15 +189,24 @@ namespace NasaSim
                              Smoother(Mathf.Clamp01(k * 1.3f)));
                     if (_t >= 1f)
                     {
-                        _step = Step.Bring;
-                        _t = 0f;
-                        _scaleFrom = 1f;
-                        _scaleTo = carryScale;
-                        _scaleT = 0f;
-                        _spinTarget = _spin * Quaternion.AngleAxis(45f, TumbleAxis());
+                        // Anything rooted gets pulled free first. A snack lying loose on a bench has
+                        // nothing to pull against, so it skips straight to being carried.
+                        if (_food != null && _food.ShouldPluck)
+                        {
+                            _step = Step.Pluck;
+                            _t = 0f;
+                            _contactDone = false;
+                        }
+                        else StartBring();
                     }
                     break;
                 }
+                case Step.Pluck:
+                    TickPluck(dt);
+                    break;
+                case Step.Inspect:
+                    TickInspect(dt);
+                    break;
                 case Step.Bring:
                 {
                     _t += dt / bringSeconds;
@@ -197,7 +220,13 @@ namespace NasaSim
                     // along the path itself while the hand pulls in after it; by the end the hold pose IS
                     // within reach, and object and palm arrive together.
                     CarryAt(dt, Vector3.Lerp(along, CarryPoint(), k * k));
-                    if (_t >= 1f) { _step = Step.Bites; _t = 0f; _contactDone = false; }
+                    if (_t >= 1f)
+                    {
+                        float look = _food != null ? _food.inspectSeconds : 0f;
+                        _step = look > 0f ? Step.Inspect : Step.Bites;
+                        _t = 0f;
+                        _contactDone = false;
+                    }
                     break;
                 }
                 case Step.Bites:
@@ -212,6 +241,87 @@ namespace NasaSim
                     break;
                 }
             }
+        }
+
+        /// <summary>
+        /// Pull it free of whatever it is growing on.
+        ///
+        /// The shape of it is the whole point: it gives a few millimetres the WRONG way first, then barely
+        /// moves at all while the hand strains against it, and only then lets go and flies. A snack that
+        /// simply slides up out of the soil at a constant speed reads as weightless — this reads as
+        /// rooted. The soil comes off it at the moment it releases, not before.
+        /// </summary>
+        void TickPluck(float dt)
+        {
+            const float Load = 0.34f;   // done leaning in on it
+            const float Free = 0.60f;   // it lets go here
+
+            float seconds = _food != null ? _food.pluckSeconds : 0.6f;
+            _t += dt / Mathf.Max(0.05f, seconds);
+            float k = Mathf.Clamp01(_t);
+
+            Vector3 axis = _food != null ? _food.PluckAxis : Vector3.up;
+            float distance = _food != null ? _food.pluckDistance : 0f;
+
+            float travel;
+            if (k < Load)
+                travel = Mathf.Lerp(0f, -0.10f, EaseOutCubic(k / Load)) * distance;
+            else if (k < Free)
+                travel = Mathf.Lerp(-0.10f, 0.16f, EaseInCubic((k - Load) / (Free - Load))) * distance;
+            else
+                travel = Mathf.Lerp(0.16f, 1f, EaseOutBack((k - Free) / (1f - Free), 1.1f)) * distance;
+
+            Vector3 at = _grabPoint + axis * travel;
+
+            // The wrist leads the snack: pressing in against it while it holds, overshooting past it the
+            // instant it comes away.
+            float lead = k < Free
+                ? -pluckLoad * Mathf.Sin(k / Free * Mathf.PI)
+                : pluckSnap * Mathf.Sin((k - Free) / (1f - Free) * Mathf.PI);
+            DriveArm(at + axis * (lead * Reach), 1f);
+            CarryAt(dt, at);
+
+            if (!_contactDone && k >= Free)
+            {
+                _contactDone = true;
+                EmitPluckDebris(_grabPoint, axis);
+                PlaySound(_food != null ? _food.pluckClip : null);
+                // A quarter turn on release, so it is already moving before the carry arc picks it up.
+                _spinTarget = _spin * Quaternion.AngleAxis(30f, TumbleAxis());
+            }
+
+            if (_t >= 1f)
+            {
+                // The carry arc starts from where the snack ACTUALLY is now, not from the soil it came
+                // out of, or it would dive back into the ground on its way up.
+                _grabPoint = at;
+                StartBring();
+            }
+        }
+
+        /// <summary>Hold it up near the visor and turn it. This is the shot the snack was modelled for.</summary>
+        void TickInspect(float dt)
+        {
+            float seconds = _food != null ? _food.inspectSeconds : 0f;
+            _t += dt;
+
+            DriveArm(Vector3.Lerp(HoldPoint(), MouthPoint(), inspectCloseness), 1f);
+            // Advancing the TARGET rather than the pose itself keeps the existing slerp in CarryAt doing
+            // the smoothing, so the turn eases rather than ticking round at a constant rate.
+            _spinTarget = _spinTarget * Quaternion.AngleAxis(inspectSpinDegPerSec * dt, TumbleAxis());
+            CarryAt(dt, CarryPoint());
+
+            if (_t >= seconds) { _step = Step.Bites; _t = 0f; _contactDone = false; }
+        }
+
+        void StartBring()
+        {
+            _step = Step.Bring;
+            _t = 0f;
+            _scaleFrom = _scaleMul;      // whatever the pluck left it at, not an assumed 1
+            _scaleTo = carryScale;
+            _scaleT = 0f;
+            _spinTarget = _spin * Quaternion.AngleAxis(45f, TumbleAxis());
         }
 
         // One beat per bite: lift it to the visor, chomp, withdraw, chew.
@@ -486,9 +596,12 @@ namespace NasaSim
 
         // ---------------------------------------------------------------- feedback
 
-        void PlayBiteSound()
+        void PlayBiteSound() =>
+            PlaySound(_food != null && _food.biteClip != null ? _food.biteClip : biteClip);
+
+        void PlaySound(AudioClip clip)
         {
-            AudioClip clip = _food != null && _food.biteClip != null ? _food.biteClip : biteClip;
+            if (clip == null) clip = biteClip;
             AudioSource src = _food != null && _food.audioSource != null ? _food.audioSource : audioSource;
             if (src != null && clip != null) src.PlayOneShot(clip);
         }
@@ -503,6 +616,30 @@ namespace NasaSim
                 startSize = Mathf.Max(0.005f, Reach * 0.05f),
             };
             _crumbs.Emit(p, count);
+        }
+
+        /// <summary>
+        /// The soil coming off a root as it clears the ground. Emitted one at a time with its own velocity
+        /// rather than in a single burst: a clod thrown sideways and falling is what says "that was
+        /// buried", and one Emit call would give the whole lot the same direction.
+        /// </summary>
+        void EmitPluckDebris(Vector3 at, Vector3 axis)
+        {
+            if (_crumbs == null) _crumbs = BuildCrumbSystem();
+            Color color = _food != null ? _food.PluckDebrisColor : new Color(0.34f, 0.26f, 0.18f);
+            float speed = Reach * 0.9f;
+            for (int i = 0; i < 20; i++)
+            {
+                var p = new ParticleSystem.EmitParams
+                {
+                    position = at + Random.insideUnitSphere * (Reach * 0.05f),
+                    startColor = color,
+                    startSize = Mathf.Max(0.004f, Reach * Random.Range(0.03f, 0.08f)),
+                    velocity = Random.onUnitSphere * speed + axis * (speed * 0.55f),
+                    startLifetime = Random.Range(0.7f, 1.4f),
+                };
+                _crumbs.Emit(p, 1);
+            }
         }
 
         // Built in code (no particle assets in the project): tiny bits in the object's own colour that pop

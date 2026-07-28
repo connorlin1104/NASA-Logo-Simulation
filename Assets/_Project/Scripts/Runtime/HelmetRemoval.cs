@@ -23,9 +23,24 @@ namespace NasaSim
     /// walk swing and the hand controller have already posed the skeleton, so the helmet reads this
     /// frame's real head position, not last frame's.
     ///
-    /// <b>What sets it off.</b> Crossing the boundary of the pressurized zone — EDGE-triggered, so
-    /// walking into the biodome takes it off, walking out puts it back, and the H key still works
-    /// anywhere without the zone immediately arguing with you.
+    /// <b>What sets it off — normally, one box, once.</b> With <see cref="onceOnly"/> on (the default)
+    /// there is exactly one trigger volume, you put it wherever the take-off should happen, and the moment
+    /// the astronaut is inside it the helmet comes off. After that it is off for the rest of the run: the
+    /// zones are not consulted, a chamber venting cannot re-seal it, and neither the H key nor anything
+    /// else can put it back. One event, in a place you chose, that cannot un-happen — which is what a
+    /// single continuous take needs.
+    ///
+    /// The one exception is deliberate: if you put the box INSIDE a <see cref="PressureChamber"/>, that
+    /// chamber still has to finish pressurizing before the helmet comes off, because that is plainly what
+    /// you meant by putting it there. Put the box anywhere else and stepping in is the whole trigger.
+    ///
+    /// <b>The old behaviour is still here</b> behind <see cref="onceOnly"/> = false: pressurized zones,
+    /// EDGE-triggered, helmet back on when you leave, and a chamber you are standing in overriding the
+    /// zone. Reversible, and therefore no good for a recording.
+    ///
+    /// <b>It is a three-part move, not a fade.</b> Off the head, out in front of the body where the
+    /// camera can see it, held there turning, and only then tucked at the hip. A helmet that slides
+    /// quietly from head to hip in a second and a half is over before you have registered it.
     ///
     /// Unscaled time throughout, like everything else the player watches.
     /// </summary>
@@ -33,7 +48,10 @@ namespace NasaSim
     [DisallowMultipleComponent]
     public sealed class HelmetRemoval : MonoBehaviour
     {
-        public enum State { Worn, TakingOff, Held, PuttingOn }
+        // Showing and Stowing are APPENDED rather than slotted in where they belong in the sequence.
+        // Nothing serialises this today, but the cost of appending is one out-of-order enum and the cost
+        // of guessing wrong is every saved reference silently shifting by two.
+        public enum State { Worn, TakingOff, Held, PuttingOn, Showing, Stowing }
 
         [Header("Parts (wired by the helmet builder tool)")]
         [Tooltip("The helmet prop. Its PH_ child is a placeholder — swap it for a modelled helmet with " +
@@ -83,7 +101,17 @@ namespace NasaSim
             }
         }
 
-        [Header("Pressurized zones")]
+        [Header("Once, where you put the box")]
+        [Tooltip("Step into the trigger box below and the helmet comes off — once. It never goes back on " +
+                 "for the rest of the run: not when you leave, not when a chamber vents, not on H. " +
+                 "This is the setting for a recording. Turn it off to get the old reversible zones back.")]
+        public bool onceOnly = true;
+
+        [Tooltip("The box you step into. Put it wherever the take-off should happen. Keep its Transform " +
+                 "at scale 1 and unparented, or the size below stops being metres.")]
+        public Zone trigger = new Zone("take the helmet off here", null, new Vector3(4f, 3f, 4f));
+
+        [Header("Pressurized zones (only used when 'Once' is off)")]
         [Tooltip("The helmet comes off inside ANY of these and goes back on outside all of them. " +
                  "Normally one for the biodome and one for the tunnel. Empty means H key only.")]
         public List<Zone> zones = new List<Zone>();
@@ -103,14 +131,44 @@ namespace NasaSim
                  "take-off entirely — you press Play and the helmet is simply gone.")]
         public bool matchZoneOnStart;
 
+        [Header("Wait for the gas chamber")]
+        [Tooltip("While you are standing in a pressure chamber, that chamber decides — the helmet stays " +
+                 "on until its lamp goes green. Outside every chamber the zones decide as usual. Leave " +
+                 "the list empty and it finds them itself.")]
+        public bool waitForPressure = true;
+        public List<PressureChamber> chambers = new List<PressureChamber>();
+        [Tooltip("A beat between the lamp turning green and the hands going up, so the two read as cause " +
+                 "and effect rather than as one event.")]
+        [Min(0f)] public float pauseAfterPressurized = 0.6f;
+
         [Header("Motion (real seconds, immune to sim fast-forward)")]
-        [Min(0.1f)] public float takeOffSeconds = 1.5f;
+        [Tooltip("Off the head and out in front of you.")]
+        [Min(0.1f)] public float takeOffSeconds = 1.6f;
+        [Tooltip("From out in front down to the hip.")]
+        [Min(0.1f)] public float stowSeconds = 1.1f;
+        [Tooltip("The whole way back, hip to head.")]
         [Min(0.1f)] public float putOnSeconds = 1.3f;
         [Tooltip("How far the helmet rises straight up before it travels — it has to clear the head " +
                  "before it can go anywhere else.")]
-        [Min(0f)] public float liftHeight = 0.30f;
+        [Min(0f)] public float liftHeight = 0.45f;
         [Tooltip("Extra bow in the path down to the hip, so it swings rather than slides.")]
-        [Min(0f)] public float arcHeight = 0.12f;
+        [Min(0f)] public float arcHeight = 0.25f;
+
+        [Header("Hold it up where you can see it")]
+        [Tooltip("Bring it out in front of the body and hold it there before stowing it. This is the " +
+                 "difference between watching the helmet come off and noticing afterwards that it has.")]
+        public bool showItOff = true;
+        [Tooltip("Seconds it hangs there turning.")]
+        [Min(0f)] public float showSeconds = 1.3f;
+        [Tooltip("How far in front of the head it is held. In first person this is straight down the " +
+                 "middle of the view.")]
+        [Min(0.05f)] public float showDistance = 0.45f;
+        [Tooltip("How far below the head, so it does not sit on top of what you are looking at.")]
+        public float showHeight = -0.22f;
+        [Tooltip("Turns on the spot while held, so you see all of it rather than one side.")]
+        public float showSpinDegPerSec = 75f;
+        [Tooltip("Tipped forward while held, so you can see into the bowl of it.")]
+        [Range(-90f, 90f)] public float showTiltDegrees = 22f;
 
         [Header("The reach")]
         [Tooltip("Pose the right arm so the hand goes up and gets it. Needs an AstronautLocomotionVisual " +
@@ -148,15 +206,69 @@ namespace NasaSim
 
         public State CurrentState { get; private set; } = State.Worn;
         public bool IsOff => CurrentState == State.Held;
-        public bool IsMoving => CurrentState == State.TakingOff || CurrentState == State.PuttingOn;
+        public bool IsMoving => CurrentState == State.TakingOff || CurrentState == State.Showing ||
+                                CurrentState == State.Stowing || CurrentState == State.PuttingOn;
 
-        float _t;              // 0 = on the head, 1 = held at the hip
-        bool _wasInside;
+        /// <summary>
+        /// The one-time take-off has happened. Deliberately NOT serialized: it is state about this run,
+        /// and a version of it that survived into the asset would mean the second time you pressed Play
+        /// the helmet never came off at all.
+        /// </summary>
+        public bool Fired => _fired;
+
+        /// <summary>
+        /// Off, and staying off. Every path that could put the helmet back on asks this first — the zone
+        /// logic, a venting chamber, the H key — so there is one place to be right rather than four places
+        /// to remember.
+        /// </summary>
+        public bool Locked => onceOnly && _fired;
+
+        public bool HasTrigger => trigger != null && trigger.center != null;
+
+        public float TriggerDepth(Vector3 worldPoint) =>
+            trigger != null ? trigger.Depth(worldPoint) : float.NegativeInfinity;
+
+        public bool TriggerContains(Vector3 worldPoint) => TriggerDepth(worldPoint) >= 0f;
+
+        /// <summary>The chamber the trigger box sits in, if any — what the tool warns about.</summary>
+        public PressureChamber ChamberAtTrigger() =>
+            HasTrigger ? ChamberAt(trigger.center.position) : null;
+
+        /// <summary>True when a chamber is wired up and allowed to have the last word.</summary>
+        public bool GateActive
+        {
+            get
+            {
+                if (!waitForPressure || chambers == null) return false;
+                for (int i = 0; i < chambers.Count; i++)
+                    if (chambers[i] != null) return true;
+                return false;
+            }
+        }
+
+        // 0 = on the head, 0.5 = held up in front, 1 = tucked at the hip. One number for the whole
+        // journey, so reversing halfway is just running it the other way.
+        const float Presented = 0.5f;
+
+        float _t;
+        float _showTimer;
+        float _spin;
+        bool _wasInZone;
+        bool _wasSafe;
+        float _greenTimer;
+        bool _fired;
 
         void Awake()
         {
             if (locomotion == null) locomotion = GetComponentInChildren<AstronautLocomotionVisual>();
             if (hand == null) hand = GetComponentInChildren<HandActionController>();
+
+            // Objects, not values: finding the chambers here can't drift the way capturing a pose or a
+            // rate would. The builder tool fills the list anyway; this only covers a scene where the
+            // chamber was added afterwards.
+            if (waitForPressure && (chambers == null || chambers.Count == 0))
+                chambers = new List<PressureChamber>(
+                    FindObjectsByType<PressureChamber>(FindObjectsInactive.Include));
         }
 
         void Start()
@@ -164,8 +276,15 @@ namespace NasaSim
             // Seed the edge detector with where we actually are, so spawning inside the zone is not read
             // as a crossing. The helmet still starts ON unless matchZoneOnStart says otherwise: the first
             // time you cross the boundary in either direction you get the full move, which is the point.
-            _wasInside = ZoneContains(Probe);
-            if (matchZoneOnStart && _wasInside) SetImmediate(off: true);
+            _wasInZone = ZoneContains(Probe);
+            _wasSafe = SafeToUnseal(ChamberAt(Probe), _wasInZone);
+            _fired = false;
+
+            // A one-time take-off ALWAYS starts worn, whatever matchZoneOnStart says: it is the one moment
+            // the whole sequence exists for, and starting off means it happened before frame one. Same
+            // reasoning for a gated helmet — the chamber starts in vacuum, so "already off at spawn" would
+            // be unsealed in a room with no air in it.
+            if (!onceOnly && matchZoneOnStart && _wasSafe && !GateActive) SetImmediate(off: true);
             else ApplyPose();
         }
 
@@ -176,13 +295,19 @@ namespace NasaSim
         {
             if (CurrentState != State.Worn || helmet == null) return false;
             CurrentState = State.TakingOff;
+            _showTimer = showSeconds;
             Play(unsealClip);
             return true;
         }
 
-        /// <summary>Put it back on. Returns false if it is already on or mid-move.</summary>
+        /// <summary>
+        /// Put it back on. Returns false if it is already on, mid-move, or — the case that matters —
+        /// permanently off. This is the single choke point: the zone logic, the chamber logic and the key
+        /// all come through here, so "it never goes back on" is one condition rather than four.
+        /// </summary>
         public bool PutOn()
         {
+            if (Locked) return false;
             if (CurrentState != State.Held || helmet == null) return false;
             CurrentState = State.PuttingOn;
             Play(sealClip);
@@ -191,14 +316,57 @@ namespace NasaSim
 
         public void Toggle()
         {
-            if (CurrentState == State.Worn) TakeOff();
+            // In one-time mode H is a one-way switch: it can bring the moment forward, which is useful for
+            // lining up a shot, but it can never undo it.
+            if (CurrentState == State.Worn)
+            {
+                if (TakeOff() && onceOnly) _fired = true;
+            }
             else if (CurrentState == State.Held) PutOn();
+        }
+
+        /// <summary>
+        /// Head for "off", from wherever the move currently is. Turning back mid-move REVERSES it rather
+        /// than being ignored — the whole journey is one number, so resuming is a matter of picking the
+        /// leg that number is currently in.
+        /// </summary>
+        void HeadForOff()
+        {
+            if (helmet == null) return;
+            switch (CurrentState)
+            {
+                case State.Worn:
+                    TakeOff();
+                    break;
+                case State.PuttingOn:
+                    CurrentState = _t > Presented ? State.Stowing : State.TakingOff;
+                    break;
+            }
+        }
+
+        void HeadForOn()
+        {
+            if (helmet == null || Locked) return;
+            switch (CurrentState)
+            {
+                case State.Held:
+                    PutOn();
+                    break;
+                case State.TakingOff:
+                case State.Showing:
+                case State.Stowing:
+                    CurrentState = State.PuttingOn;
+                    break;
+            }
         }
 
         /// <summary>Snap to either end without animating — the editor's preview, and the Start pose.</summary>
         public void SetImmediate(bool off)
         {
             _t = off ? 1f : 0f;
+            _spin = 0f;
+            _showTimer = 0f;
+            _fired = off;                      // previewing "worn" re-arms the trigger; "off" locks it
             CurrentState = off ? State.Held : State.Worn;
             ApplyPose();
         }
@@ -231,41 +399,127 @@ namespace NasaSim
 
             if (enableKey && TogglePressed()) Toggle();
 
-            // Edge-triggered, not level-triggered: level-triggering would undo every manual press the
-            // instant it was made, because standing still outside the zone permanently "wants" it on.
-            //
-            // The margin is what stops it chattering. A boundary you are standing ON is crossed and
-            // re-crossed by every dip in the ground, and each crossing restarts a 1.5 s animation — the
-            // symptom is a helmet that comes off and goes back on continuously as you walk. You now have
-            // to travel boundaryMargin metres PAST the wall before the crossing counts, in either
-            // direction, which leaves a dead band twice that wide around every face of every zone.
-            float depth = ZoneDepth(Probe);
-            bool inside = _wasInside ? depth > -boundaryMargin : depth > boundaryMargin;
-            if (inside != _wasInside)
-            {
-                _wasInside = inside;
-                // Turning back in the doorway reverses the move rather than being ignored: the two
-                // transitions share _t, so flipping the state just runs the same travel the other way.
-                if (inside)
-                    { if (CurrentState == State.PuttingOn) CurrentState = State.TakingOff; else TakeOff(); }
-                else
-                    { if (CurrentState == State.TakingOff) CurrentState = State.PuttingOn; else PutOn(); }
-            }
+            if (onceOnly) TickTrigger(dt);
+            else TickZones(dt);
+
+            if (IsMoving) _spin += showSpinDegPerSec * dt;
 
             switch (CurrentState)
             {
                 case State.TakingOff:
-                    _t = Mathf.MoveTowards(_t, 1f, dt / takeOffSeconds);
+                    _t = Mathf.MoveTowards(_t, Presented, Presented * dt / takeOffSeconds);
+                    if (_t >= Presented)
+                    {
+                        // Skipping the hold when it is switched off keeps this one path rather than
+                        // sprouting a second one: the show simply has zero duration.
+                        CurrentState = State.Showing;
+                        _showTimer = showItOff ? showSeconds : 0f;
+                    }
+                    break;
+
+                case State.Showing:
+                    _showTimer -= dt;
+                    if (_showTimer <= 0f) CurrentState = State.Stowing;
+                    break;
+
+                case State.Stowing:
+                    _t = Mathf.MoveTowards(_t, 1f, Presented * dt / stowSeconds);
                     if (_t >= 1f) { CurrentState = State.Held; onHelmetOff?.Invoke(); }
                     break;
+
                 case State.PuttingOn:
                     _t = Mathf.MoveTowards(_t, 0f, dt / putOnSeconds);
-                    if (_t <= 0f) { CurrentState = State.Worn; onHelmetOn?.Invoke(); }
+                    if (_t <= 0f) { CurrentState = State.Worn; _spin = 0f; onHelmetOn?.Invoke(); }
                     break;
             }
 
             ApplyPose();
             if (IsMoving) DriveArm();
+        }
+
+        /// <summary>
+        /// One box, one time. The moment the astronaut is inside it the move starts, and <c>_fired</c>
+        /// latches — after which this method does nothing at all for the rest of the run, and
+        /// <see cref="Locked"/> refuses every attempt to put the helmet back.
+        ///
+        /// There is no hysteresis and no edge detection here, and that is the point: an edge can be
+        /// crossed back the other way. A latch cannot.
+        ///
+        /// The chamber test only applies when the box is inside a chamber. Putting the take-off in the
+        /// airlock plainly means "after it has pressurized"; putting it anywhere else plainly means
+        /// "when I walk in", and a helmet that silently refused to come off because of a room somewhere
+        /// else in the station would be the worst possible thing to discover mid-take.
+        /// </summary>
+        void TickTrigger(float dt)
+        {
+            if (_fired || !TriggerContains(Probe)) return;
+
+            PressureChamber here = ChamberAt(Probe);
+            if (here != null)
+            {
+                if (!here.IsPressurized) { _greenTimer = 0f; return; }
+                _greenTimer += dt;
+                if (_greenTimer < pauseAfterPressurized) return;
+            }
+
+            // Latched only on success: with the helmet reference missing, TakeOff fails and this stays
+            // armed rather than burning the one shot on a frame that could not have used it.
+            if (TakeOff()) _fired = true;
+        }
+
+        /// <summary>The old reversible behaviour, kept whole behind <see cref="onceOnly"/> = false.</summary>
+        void TickZones(float dt)
+        {
+            // Edge-triggered, not level-triggered: level-triggering would undo every manual press the
+            // instant it was made, because standing still outside the zone permanently "wants" it on.
+            //
+            // The margin is what stops it chattering. A boundary you are standing ON is crossed and
+            // re-crossed by every dip in the ground, and each crossing restarts the animation — the
+            // symptom is a helmet that comes off and goes back on continuously as you walk. You have to
+            // travel boundaryMargin metres PAST the wall before the crossing counts, in either direction,
+            // which leaves a dead band twice that wide around every face of every zone.
+            float depth = ZoneDepth(Probe);
+            _wasInZone = _wasInZone ? depth > -boundaryMargin : depth > boundaryMargin;
+
+            // Whichever chamber you are standing in, if any, has the last word — see the class summary.
+            // No hysteresis needed here: the chamber runs its own presence test with its own exit margin,
+            // and it takes seconds to change its mind.
+            PressureChamber lockHere = ChamberAt(Probe);
+            if (lockHere != null && lockHere.IsPressurized) _greenTimer += dt;
+            else _greenTimer = 0f;
+
+            bool safe = SafeToUnseal(lockHere, _wasInZone);
+            if (safe != _wasSafe)
+            {
+                _wasSafe = safe;
+                if (safe) HeadForOff(); else HeadForOn();
+            }
+        }
+
+        /// <summary>
+        /// May the helmet come off where we are standing? One method rather than the same expression
+        /// written out at Start and again in the loop — the two drifting apart is exactly how you get a
+        /// helmet that behaves differently on the first frame than on every frame after it.
+        ///
+        /// Note the explicit <see cref="PressureChamber.IsPressurized"/> test. Leaning on the timer alone
+        /// would read as safe the instant you stepped into a chamber whenever the beat was set to zero,
+        /// because a timer sitting at 0 does satisfy "at least 0 seconds".
+        /// </summary>
+        bool SafeToUnseal(PressureChamber lockHere, bool inZone) =>
+            lockHere != null
+                ? lockHere.IsPressurized && _greenTimer >= pauseAfterPressurized
+                : inZone;
+
+        /// <summary>The pressure chamber the astronaut is standing in, or null for "not in one".</summary>
+        public PressureChamber ChamberAt(Vector3 worldPoint)
+        {
+            if (!waitForPressure || chambers == null) return null;
+            for (int i = 0; i < chambers.Count; i++)
+            {
+                PressureChamber c = chambers[i];
+                if (c != null && c.isActiveAndEnabled && c.Contains(worldPoint, 0f)) return c;
+            }
+            return null;
         }
 
         void ApplyPose()
@@ -274,19 +528,78 @@ namespace NasaSim
 
             GetPose(headAnchor, _wornLocalPos, _wornLocalRot, out Vector3 wornPos, out Quaternion wornRot);
             GetPose(holdAnchor, _heldLocalPos, _heldLocalRot, out Vector3 heldPos, out Quaternion heldRot);
+            ShowPose(wornPos, wornRot, out Vector3 showPos, out Quaternion showRot);
 
             if (_t <= 0f) { helmet.SetPositionAndRotation(wornPos, wornRot); return; }
             if (_t >= 1f) { helmet.SetPositionAndRotation(heldPos, heldRot); return; }
 
-            // Straight up off the head first, THEN across to the hip — the two overlap in the middle so
-            // it flows. Lifting and travelling at once would drag the helmet through the face.
-            float lift = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0f, 0.45f, _t));
-            float carry = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.35f, 1f, _t));
+            if (_t <= Presented)
+            {
+                // Straight up off the head first, THEN out in front — the two overlap in the middle so it
+                // flows. Lifting and travelling at once would drag the helmet through the face.
+                float k = _t / Presented;
+                float lift = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0f, 0.45f, k));
+                float carry = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.35f, 1f, k));
 
-            Vector3 clear = wornPos + Vector3.up * (liftHeight * lift);
-            Vector3 pos = Vector3.Lerp(clear, heldPos, carry)
-                          + Vector3.up * (arcHeight * Mathf.Sin(carry * Mathf.PI));
-            helmet.SetPositionAndRotation(pos, Quaternion.Slerp(wornRot, heldRot, carry));
+                Vector3 clear = wornPos + Vector3.up * (liftHeight * lift);
+                helmet.SetPositionAndRotation(Vector3.Lerp(clear, showPos, carry),
+                                              Quaternion.Slerp(wornRot, showRot, carry));
+                return;
+            }
+
+            // And down to the hip, bowed so it swings rather than slides.
+            float c = Mathf.SmoothStep(0f, 1f, (_t - Presented) / Presented);
+            helmet.SetPositionAndRotation(
+                Vector3.Lerp(showPos, heldPos, c) + Vector3.up * (arcHeight * Mathf.Sin(c * Mathf.PI)),
+                Quaternion.Slerp(showRot, heldRot, c));
+        }
+
+        /// <summary>
+        /// Where it is held up: out in front of the body at the head's height, turning.
+        ///
+        /// Computed from the BODY's forward rather than the head bone's, so it stays put in front of you
+        /// while you look around — anchoring it to the head would swing a helmet round the room every
+        /// time the mouse moved. In first person this lands in the middle of the view, which is the whole
+        /// point of the pause.
+        /// </summary>
+        void ShowPose(Vector3 wornPos, Quaternion wornRot, out Vector3 pos, out Quaternion rot)
+        {
+            if (!showItOff)
+            {
+                // No hold: the waypoint collapses back to "just clear of the head" and the move is the
+                // two-part one it always was.
+                pos = wornPos + Vector3.up * liftHeight;
+                rot = wornRot;
+                return;
+            }
+
+            pos = wornPos + transform.forward * showDistance + Vector3.up * showHeight;
+            rot = Quaternion.AngleAxis(_spin, Vector3.up) * wornRot
+                  * Quaternion.Euler(showTiltDegrees, 0f, 0f);
+        }
+
+        /// <summary>
+        /// The one box, drawn solid as well as wired. It is a thing you position by eye and walk into, so
+        /// it has to be findable in a crowded Scene view — a wireframe alone disappears into the
+        /// greenhouse.
+        /// </summary>
+        void DrawTrigger()
+        {
+            if (!HasTrigger) return;
+
+            var green = new Color(0.35f, 1f, 0.45f, 1f);
+            Gizmos.matrix = Matrix4x4.TRS(trigger.center.position, trigger.center.rotation, Vector3.one);
+            Gizmos.color = new Color(green.r, green.g, green.b, 0.14f);
+            Gizmos.DrawCube(Vector3.zero, trigger.size);
+            Gizmos.color = green;
+            Gizmos.DrawWireCube(Vector3.zero, trigger.size);
+            Gizmos.matrix = Matrix4x4.identity;
+
+#if UNITY_EDITOR
+            UnityEditor.Handles.color = green;
+            UnityEditor.Handles.Label(trigger.center.position + Vector3.up * (trigger.size.y * 0.5f + 0.5f),
+                "STEP HERE → helmet comes off, once, and stays off");
+#endif
         }
 
         void DrawZone(Zone z)
@@ -427,32 +740,38 @@ namespace NasaSim
         {
             if (!showGizmo) return;
 
-            if (zones != null)
-                for (int i = 0; i < zones.Count; i++)
-                    DrawZone(zones[i]);
-
-            if (pressurizedZone != null)
+            if (onceOnly) DrawTrigger();
+            else
             {
-                _legacy.center = pressurizedZone;
-                _legacy.size = zoneSize;
-                _legacy.label = "legacy zone — move me into the list";
-                DrawZone(_legacy);
+                if (zones != null)
+                    for (int i = 0; i < zones.Count; i++)
+                        DrawZone(zones[i]);
+
+                if (pressurizedZone != null)
+                {
+                    _legacy.center = pressurizedZone;
+                    _legacy.size = zoneSize;
+                    _legacy.label = "legacy zone — move me into the list";
+                    DrawZone(_legacy);
+                }
             }
 
             if (helmet == null) return;
 
-            GetPose(headAnchor, _wornLocalPos, _wornLocalRot, out Vector3 wornPos, out _);
+            GetPose(headAnchor, _wornLocalPos, _wornLocalRot, out Vector3 wornPos, out Quaternion wornRot);
             GetPose(holdAnchor, _heldLocalPos, _heldLocalRot, out Vector3 heldPos, out _);
+            ShowPose(wornPos, wornRot, out Vector3 showPos, out _);
 
-            // The path it will travel: up off the head, then round to the hip.
+            // The path it will travel: up off the head, out in front, then round to the hip.
             Gizmos.color = new Color(1f, 0.85f, 0.35f, 0.95f);
             Vector3 clear = wornPos + Vector3.up * liftHeight;
             Gizmos.DrawLine(wornPos, clear);
-            Vector3 prev = clear;
+            Gizmos.DrawLine(clear, showPos);
+            Vector3 prev = showPos;
             for (int i = 1; i <= 12; i++)
             {
                 float k = i / 12f;
-                Vector3 p = Vector3.Lerp(clear, heldPos, k) + Vector3.up * (arcHeight * Mathf.Sin(k * Mathf.PI));
+                Vector3 p = Vector3.Lerp(showPos, heldPos, k) + Vector3.up * (arcHeight * Mathf.Sin(k * Mathf.PI));
                 Gizmos.DrawLine(prev, p);
                 prev = p;
             }
@@ -461,12 +780,23 @@ namespace NasaSim
             Gizmos.DrawWireSphere(wornPos, _gripRadius);
             Gizmos.color = new Color(1f, 0.7f, 0.3f, 0.9f);
             Gizmos.DrawWireSphere(heldPos, _gripRadius);
+            if (showItOff)
+            {
+                Gizmos.color = new Color(0.6f, 1f, 0.6f, 0.9f);
+                Gizmos.DrawWireSphere(showPos, _gripRadius * 1.15f);
+            }
 
 #if UNITY_EDITOR
             UnityEditor.Handles.color = new Color(0.5f, 0.9f, 1f);
             UnityEditor.Handles.Label(wornPos + Vector3.up * (_gripRadius + 0.05f), "worn");
             UnityEditor.Handles.color = new Color(1f, 0.7f, 0.3f);
             UnityEditor.Handles.Label(heldPos + Vector3.up * (_gripRadius + 0.05f), "carried");
+            if (showItOff)
+            {
+                UnityEditor.Handles.color = new Color(0.6f, 1f, 0.6f);
+                UnityEditor.Handles.Label(showPos + Vector3.up * (_gripRadius + 0.08f),
+                                          $"held up for {showSeconds:0.0} s");
+            }
 #endif
         }
     }

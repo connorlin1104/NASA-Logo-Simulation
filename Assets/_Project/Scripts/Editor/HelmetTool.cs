@@ -31,6 +31,7 @@ namespace NasaSim.EditorTools
         const string HoldAnchorName = "HelmetHoldAnchor";
         const string ZoneName = "HelmetZone";
         const string ZoneRootName = "HelmetZones";
+        const string TriggerName = "HelmetTrigger";
         const string VisorMatPath = "Assets/_Project/Materials/HelmetVisor.mat";
         const string ShellMatPath = "Assets/_Project/Materials/HelmetShell.mat";
 
@@ -50,11 +51,24 @@ namespace NasaSim.EditorTools
         [SerializeField] float _hipForward = 0.04f;
         [SerializeField] float _hipDrop = 0.06f;
 
-        [SerializeField] float _takeOffSeconds = 1.5f;
+        [SerializeField] float _takeOffSeconds = 1.6f;
+        [SerializeField] float _stowSeconds = 1.1f;
         [SerializeField] float _putOnSeconds = 1.3f;
-        [SerializeField] float _liftHeight = 0.30f;
+        [SerializeField] float _liftHeight = 0.45f;
         [SerializeField] bool _reachForIt = true;
         [SerializeField] bool _enableKey = true;
+
+        [SerializeField] bool _showItOff = true;
+        [SerializeField] float _showSeconds = 1.3f;
+        [SerializeField] float _showDistance = 0.45f;
+        [SerializeField] float _showHeight = -0.22f;
+        [SerializeField] float _showSpin = 75f;
+
+        [SerializeField] bool _waitForPressure = true;
+        [SerializeField] float _pauseAfterGreen = 0.6f;
+
+        [SerializeField] bool _onceOnly = true;
+        [SerializeField] Vector3 _triggerSize = new Vector3(4f, 3f, 4f);
 
         [SerializeField] bool _buildZone = true;
         [SerializeField] float _zoneShrink = 0.9f;
@@ -76,11 +90,14 @@ namespace NasaSim.EditorTools
         void OnGUI()
         {
             EditorGUILayout.HelpBox(
-                "Puts a helmet on the astronaut that comes off when you walk inside.\n\n" +
+                "Puts a helmet on the astronaut that comes off once, where you put the box.\n\n" +
                 "Assign your helmet mesh, or leave it empty for a see-through placeholder visor. Then " +
                 "Build — the Scene view will show where it sits, where it ends up, and the arc it takes " +
-                "between them. In game: walk into the biodome, or press H anywhere.",
+                "between them.",
                 MessageType.Info);
+
+            EditorGUILayout.Space();
+            DrawOnceOnly();
 
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Parts", EditorStyles.boldLabel);
@@ -117,7 +134,11 @@ namespace NasaSim.EditorTools
 
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("The move", EditorStyles.boldLabel);
-            _takeOffSeconds = EditorGUILayout.Slider(new GUIContent("Take off (s)"), _takeOffSeconds, 0.3f, 4f);
+            _takeOffSeconds = EditorGUILayout.Slider(
+                new GUIContent("Off the head (s)", "Up off the head and out in front of you."),
+                _takeOffSeconds, 0.3f, 4f);
+            _stowSeconds = EditorGUILayout.Slider(
+                new GUIContent("Down to the hip (s)"), _stowSeconds, 0.3f, 4f);
             _putOnSeconds = EditorGUILayout.Slider(new GUIContent("Put on (s)"), _putOnSeconds, 0.3f, 4f);
             _liftHeight = EditorGUILayout.Slider(
                 new GUIContent("Lift clear (m)", "How far it rises straight up before travelling — it has " +
@@ -131,6 +152,159 @@ namespace NasaSim.EditorTools
                 new GUIContent("H key", "Take it off / put it on anywhere, for showing it off."), _enableKey);
 
             EditorGUILayout.Space();
+            _showItOff = EditorGUILayout.BeginToggleGroup(
+                new GUIContent("Hold it up where you can see it",
+                               "Brings the helmet out in front of the body and holds it there, turning, " +
+                               "before it goes to the hip. Off, it slides head-to-hip and is over before " +
+                               "you have registered it."),
+                _showItOff);
+            EditorGUI.indentLevel++;
+            _showSeconds = EditorGUILayout.Slider(new GUIContent("Hold for (s)"), _showSeconds, 0f, 5f);
+            _showDistance = EditorGUILayout.Slider(
+                new GUIContent("Out in front (m)", "In first person this is straight down the middle of " +
+                                                   "the view."),
+                _showDistance, 0.1f, 1.2f);
+            _showHeight = EditorGUILayout.Slider(
+                new GUIContent("Up / down from the head (m)"), _showHeight, -0.8f, 0.4f);
+            _showSpin = EditorGUILayout.Slider(
+                new GUIContent("Turn (deg/s)", "Rotates on the spot while held, so you see all of it."),
+                _showSpin, -360f, 360f);
+            EditorGUI.indentLevel--;
+            EditorGUILayout.EndToggleGroup();
+
+            EditorGUILayout.Space();
+            DrawPressureGate();
+
+            EditorGUILayout.Space();
+            using (new EditorGUI.DisabledScope(_onceOnly))
+                DrawZoneSection();
+
+            EditorGUILayout.Space();
+            using (new EditorGUI.DisabledScope(_astronaut == null))
+                if (GUILayout.Button("Build / update the helmet", GUILayout.Height(34f)))
+                    Build();
+
+            var rig = FindRig();
+            using (new EditorGUI.DisabledScope(rig == null))
+            {
+                EditorGUILayout.LabelField("Preview (moves the real helmet — undoable)",
+                                           EditorStyles.boldLabel);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    if (GUILayout.Button("Helmet on")) Preview(rig, off: false);
+                    if (GUILayout.Button("Helmet off (carried)")) Preview(rig, off: true);
+                }
+                if (GUILayout.Button("Remove the helmet")) Remove(rig);
+            }
+        }
+
+        /// <summary>
+        /// The one-time trigger box: where it is, whether it exists at all, and — the thing that decides
+        /// whether stepping in is instant or not — whether it happens to sit inside a pressure chamber.
+        /// </summary>
+        void DrawOnceOnly()
+        {
+            _onceOnly = EditorGUILayout.ToggleLeft(
+                new GUIContent("Once, where I put the box",
+                               "Step into the box and the helmet comes off. It never goes back on for the " +
+                               "rest of the run — not when you leave, not when a chamber vents, not on H."),
+                _onceOnly, EditorStyles.boldLabel);
+
+            if (!_onceOnly)
+            {
+                EditorGUILayout.HelpBox(
+                    "Off: the old behaviour. The helmet comes off inside a pressurized zone and goes back " +
+                    "ON when you leave it. Reversible, so it is no good for a single continuous take.",
+                    MessageType.Warning);
+                return;
+            }
+
+            EditorGUI.indentLevel++;
+            _triggerSize = EditorGUILayout.Vector3Field(
+                new GUIContent("Box size (m)", "How big the volume is. Big enough that you cannot stride " +
+                                               "through it between two frames."), _triggerSize);
+            _triggerSize = new Vector3(Mathf.Max(0.5f, _triggerSize.x),
+                                       Mathf.Max(0.5f, _triggerSize.y),
+                                       Mathf.Max(0.5f, _triggerSize.z));
+            EditorGUI.indentLevel--;
+
+            GameObject box = GameObject.Find(TriggerName);
+            HelmetRemoval rig = FindRig();
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button(box == null ? "Create the trigger box" : "Move the box to a default spot"))
+                    PlaceTrigger(reposition: true);
+                using (new EditorGUI.DisabledScope(box == null))
+                    if (GUILayout.Button("Select it (then drag it where you want)", GUILayout.Width(240f)))
+                    {
+                        Selection.activeGameObject = box;
+                        SceneView.FrameLastActiveSceneView();
+                    }
+            }
+
+            if (box == null)
+            {
+                EditorGUILayout.HelpBox(
+                    "There is no trigger box yet, so the helmet will never come off on its own — only " +
+                    "with H. Press 'Create the trigger box', then drag it in the Scene view to wherever " +
+                    "the take-off should happen. It shows up as a green volume.", MessageType.Warning);
+                return;
+            }
+
+            // A box parented under the greenhouse (2.808x) or the astronaut would silently be that many
+            // times the size the field above claims, because the depth test works in the box's own space.
+            Vector3 ls = box.transform.lossyScale;
+            if (Mathf.Abs(ls.x - 1f) > 0.01f || Mathf.Abs(ls.y - 1f) > 0.01f || Mathf.Abs(ls.z - 1f) > 0.01f)
+                EditorGUILayout.HelpBox(
+                    $"'{TriggerName}' has a lossy scale of {ls.x:0.00}, {ls.y:0.00}, {ls.z:0.00} — so the " +
+                    "box is really that many times the size above. Move it out of whatever it is parented " +
+                    "to, or set the parent's scale back to 1.", MessageType.Warning);
+
+            // Where the astronaut stands relative to the box, in metres, before you press Play. The
+            // equivalent readout for the old zones is what caught a 184 m zone swallowing the spawn point,
+            // and the same two failures apply here: a box you start inside, and a box you can never reach
+            // because its floor is above your head.
+            if (_astronaut != null && rig != null && rig.HasTrigger)
+            {
+                Vector3 probe = _astronaut.transform.position + Vector3.up * 0.9f;
+                float depth = rig.TriggerDepth(probe);
+                if (depth >= 0f)
+                    EditorGUILayout.HelpBox(
+                        $"The astronaut SPAWNS inside the box — {depth:0.0} m in. The helmet will come off " +
+                        "in the first second, before you have walked anywhere. Move the box somewhere you " +
+                        "arrive at.", MessageType.Error);
+                else
+                    EditorGUILayout.HelpBox(
+                        $"The astronaut starts {-depth:0.0} m outside the box. Walk into it and the helmet " +
+                        "comes off.", MessageType.None);
+            }
+
+            PressureChamber inChamber = null;
+            foreach (PressureChamber c in Object.FindObjectsByType<PressureChamber>(FindObjectsInactive.Include))
+                if (c != null && c.Contains(box.transform.position, 0f)) { inChamber = c; break; }
+
+            if (inChamber != null && _waitForPressure)
+                EditorGUILayout.HelpBox(
+                    $"The box is inside '{inChamber.name}'. Stepping in starts the pressurize cycle: red " +
+                    $"for {inChamber.SecondsToGreen:0.0} s, green, then the helmet comes off " +
+                    $"{_pauseAfterGreen:0.0} s later — {inChamber.SecondsToGreen + _pauseAfterGreen:0.0} s " +
+                    "in total. Move the box out of the chamber if you want it to happen the moment you " +
+                    "walk in.", MessageType.None);
+            else
+                EditorGUILayout.HelpBox(
+                    "The box is not inside any pressure chamber, so the moment you step in the helmet " +
+                    "comes off — no waiting.", MessageType.None);
+
+            if (rig != null && rig.helmet != null && rig.IsOff)
+                EditorGUILayout.HelpBox(
+                    "The helmet in the scene is currently parked at the hip by the Preview button. Press " +
+                    "'Helmet on' below before you record, or you will start the take with it already off.",
+                    MessageType.Warning);
+        }
+
+        void DrawZoneSection()
+        {
             _buildZone = EditorGUILayout.BeginToggleGroup("Come off automatically inside", _buildZone);
             EditorGUI.indentLevel++;
             _zoneShrink = EditorGUILayout.Slider(
@@ -156,24 +330,63 @@ namespace NasaSim.EditorTools
             EditorGUILayout.EndToggleGroup();
 
             DrawSpawnCheck();
+        }
 
-            EditorGUILayout.Space();
-            using (new EditorGUI.DisabledScope(_astronaut == null))
-                if (GUILayout.Button("Build / update the helmet", GUILayout.Height(34f)))
-                    Build();
-
-            var rig = FindRig();
-            using (new EditorGUI.DisabledScope(rig == null))
+        /// <summary>
+        /// Make the box if it isn't there, and put it somewhere defensible the first time. The default is
+        /// the pressure chamber when there is one — that is where taking the helmet off actually makes
+        /// sense — and a couple of metres in front of the astronaut otherwise. It is a starting point, not
+        /// a decision: the whole idea is that you drag it.
+        /// </summary>
+        void PlaceTrigger(bool reposition, bool focus = true)
+        {
+            GameObject box = GameObject.Find(TriggerName);
+            bool fresh = box == null;
+            if (fresh)
             {
-                EditorGUILayout.LabelField("Preview (moves the real helmet — undoable)",
-                                           EditorStyles.boldLabel);
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    if (GUILayout.Button("Helmet on")) Preview(rig, off: false);
-                    if (GUILayout.Button("Helmet off (carried)")) Preview(rig, off: true);
-                }
-                if (GUILayout.Button("Remove the helmet")) Remove(rig);
+                box = new GameObject(TriggerName);
+                Undo.RegisterCreatedObjectUndo(box, "Create Helmet Trigger");
             }
+
+            if (fresh || reposition)
+            {
+                Undo.RecordObject(box.transform, "Place Helmet Trigger");
+                // Scene root and identity scale, deliberately: the depth test works in the box's own
+                // space, so a scaled parent would make "4 m" mean something else entirely.
+                box.transform.SetParent(null, worldPositionStays: false);
+                box.transform.localScale = Vector3.one;
+
+                var chamber = Object.FindAnyObjectByType<PressureChamber>();
+                if (chamber != null)
+                {
+                    box.transform.SetPositionAndRotation(
+                        chamber.transform.TransformPoint(chamber.center), chamber.transform.rotation);
+                }
+                else if (_astronaut != null)
+                {
+                    box.transform.SetPositionAndRotation(
+                        _astronaut.transform.position + _astronaut.transform.forward * 3f
+                                                      + Vector3.up * (_triggerSize.y * 0.5f),
+                        Quaternion.identity);
+                }
+            }
+
+            HelmetRemoval rig = FindRig();
+            if (rig != null)
+            {
+                Undo.RecordObject(rig, "Place Helmet Trigger");
+                if (rig.trigger == null) rig.trigger = new HelmetRemoval.Zone();
+                rig.trigger.label = "take the helmet off here";
+                rig.trigger.center = box.transform;
+                rig.trigger.size = _triggerSize;
+                rig.onceOnly = _onceOnly;
+                EditorUtility.SetDirty(rig);
+            }
+
+            EditorSceneManager.MarkSceneDirty(box.scene);
+            if (!focus) return;
+            Selection.activeGameObject = box;
+            SceneView.FrameLastActiveSceneView();
         }
 
         GameObject Bucket(string label, string tooltip, GameObject value) =>
@@ -242,6 +455,53 @@ namespace NasaSim.EditorTools
         }
 
         /// <summary>
+        /// The gas-chamber gate, and whether there is actually a chamber for it to wait on. Ticking a
+        /// box that has nothing behind it is worse than not offering it, so the window says out loud
+        /// which of the two cases you are in.
+        /// </summary>
+        void DrawPressureGate()
+        {
+            _waitForPressure = EditorGUILayout.Toggle(
+                new GUIContent("Wait for the gas chamber",
+                               "While you are standing in a pressure chamber, that chamber decides: the " +
+                               "helmet stays sealed until the lamp goes green. Everywhere else the zones " +
+                               "still decide."),
+                _waitForPressure);
+
+            if (!_waitForPressure) return;
+
+            var chambers = Object.FindObjectsByType<PressureChamber>(FindObjectsInactive.Include);
+
+            if (chambers.Length == 0)
+            {
+                EditorGUILayout.HelpBox(
+                    "There is no pressure chamber in the scene yet, so there is nothing to wait for and " +
+                    "the zones will behave exactly as they do now.\n\n" +
+                    "Build one first: Tools > NASA Sim > Station > Pressure Chamber Gas. Then come back " +
+                    "here and build again.", MessageType.Warning);
+                return;
+            }
+
+            var sb = new System.Text.StringBuilder();
+            foreach (PressureChamber c in chambers)
+            {
+                if (sb.Length > 0) sb.Append('\n');
+                sb.Append($"  {c.name} — red for {c.SecondsToGreen:0.0} s, then green");
+            }
+            EditorGUILayout.HelpBox(
+                $"Waiting on {chambers.Length} chamber(s):\n{sb}\n\n" +
+                $"The hands go up {_pauseAfterGreen:0.0} s after the lamp turns.\n\n" +
+                "The chamber needs to sit INSIDE one of the pressurized areas above. It only decides " +
+                "while you are standing in it — step out the far side and the zone takes over again, so " +
+                "a chamber outside every zone would re-seal the helmet the moment you left it.",
+                MessageType.None);
+            _pauseAfterGreen = EditorGUILayout.Slider(
+                new GUIContent("Beat after green (s)", "A pause between the lamp turning and the helmet " +
+                                                       "moving, so the two read as cause and effect."),
+                _pauseAfterGreen, 0f, 3f);
+        }
+
+        /// <summary>
         /// The one thing that silently ruins this feature: a zone that already contains the spawn point.
         /// The helmet is then either off before you can look at it, or waiting for a boundary you are
         /// standing on the wrong side of. So the window says which side of the line you start on, in
@@ -249,6 +509,10 @@ namespace NasaSim.EditorTools
         /// </summary>
         void DrawSpawnCheck()
         {
+            // Irrelevant when one box decides: there is no boundary to spawn on the wrong side of, and
+            // the helmet always starts worn.
+            if (_onceOnly) return;
+
             var rig = FindRig();
             if (rig == null || !rig.HasAnyZone) return;
 
@@ -273,6 +537,25 @@ namespace NasaSim.EditorTools
                     "You will start already sealed in, so nothing happens until you walk out and back in. " +
                     "Press H any time to see the move regardless.",
                     MessageType.Warning);
+
+                // The specific, silent version of that: the helmet is not merely off-limits at spawn, it
+                // is GONE at spawn. You press Play, look down, and there was never a helmet — which reads
+                // as the feature not working rather than as a setting.
+                if (rig.matchZoneOnStart && !rig.GateActive)
+                {
+                    EditorGUILayout.HelpBox(
+                        "'Off already at spawn' is ticked on the helmet in the scene, so it will not just " +
+                        "be un-triggerable — it will already be at the hip on frame one and you will " +
+                        "never see it come off at all.", MessageType.Error);
+                    if (GUILayout.Button("Fix it: start with the helmet ON"))
+                    {
+                        Undo.RecordObject(rig, "Start with the helmet on");
+                        rig.matchZoneOnStart = false;
+                        _matchOnStart = false;
+                        EditorUtility.SetDirty(rig);
+                        EditorSceneManager.MarkSceneDirty(rig.gameObject.scene);
+                    }
+                }
             }
             else
             {
@@ -401,7 +684,15 @@ namespace NasaSim.EditorTools
             rig.holdAnchor = hold;
             rig.CaptureHeldPose(Vector3.zero, Quaternion.identity);
 
-            // ---- the zones ----
+            // ---- what sets it off ----
+            rig.onceOnly = _onceOnly;
+            if (_onceOnly)
+            {
+                // Never repositioned on a rebuild: the placement is the one thing here that is entirely
+                // the user's, and nothing about building the helmet is a reason to move it back.
+                PlaceTrigger(reposition: false, focus: false);
+            }
+
             if (_buildZone)
             {
                 BuildZones(rig);
@@ -414,13 +705,29 @@ namespace NasaSim.EditorTools
 
             // ---- settings ----
             rig.takeOffSeconds = _takeOffSeconds;
+            rig.stowSeconds = _stowSeconds;
             rig.putOnSeconds = _putOnSeconds;
             rig.liftHeight = _liftHeight;
             rig.reachForIt = _reachForIt;
             rig.enableKey = _enableKey;
-            rig.matchZoneOnStart = _matchOnStart;
+            // Forced off in one-time mode rather than merely ignored, so the Inspector cannot show a
+            // setting that does nothing and send someone hunting for why the helmet starts at the hip.
+            rig.matchZoneOnStart = !_onceOnly && _matchOnStart;
             rig.locomotion = locomotion;
             rig.hand = _astronaut.GetComponent<HandActionController>();
+
+            rig.showItOff = _showItOff;
+            rig.showSeconds = _showSeconds;
+            rig.showDistance = _showDistance;
+            rig.showHeight = _showHeight;
+            rig.showSpinDegPerSec = _showSpin;
+
+            rig.waitForPressure = _waitForPressure;
+            rig.pauseAfterPressurized = _pauseAfterGreen;
+            // Wired here rather than left to the component's own Awake search, so what it waits on is
+            // visible in the Inspector instead of being decided invisibly at startup.
+            rig.chambers = new List<PressureChamber>(
+                Object.FindObjectsByType<PressureChamber>(FindObjectsInactive.Include));
             if (StationBuild.TryRendererBounds(helmet.gameObject, out Bounds hb))
                 rig.SetGripRadius(Mathf.Max(hb.extents.x, hb.extents.y));
 
@@ -431,8 +738,22 @@ namespace NasaSim.EditorTools
             Debug.Log($"[Helmet] Built on '{_astronaut.name}'.\n" +
                       $"  Worn on: {(head != null ? head.name : "(nothing — assign a head bone)")}   ·   " +
                       $"carried at: {hold.name}\n" +
-                      $"  {DescribeZones(rig)}" +
+                      $"  {DescribeTrigger(rig)}" +
                       (_enableKey ? ", or press H anywhere." : ".") + "\n" +
+                      (rig.GateActive
+                          ? $"  Gated on {rig.chambers.Count} pressure chamber(s): while you are inside " +
+                            "one, the helmet stays sealed until its lamp goes green, then comes off " +
+                            $"{_pauseAfterGreen:0.0} s later. Outside them the zones decide as before.\n"
+                          : _waitForPressure
+                              ? "  'Wait for the gas chamber' is on but there is no chamber in the scene, " +
+                                "so nothing is gated. Build one with Station > Pressure Chamber Gas and " +
+                                "run this again.\n"
+                              : string.Empty) +
+                      (_showItOff
+                          ? $"  It is held out {_showDistance:0.00} m in front of you for " +
+                            $"{_showSeconds:0.0} s, turning, before it goes to the hip — total " +
+                            $"{_takeOffSeconds + _showSeconds + _stowSeconds:0.0} s of move.\n"
+                          : string.Empty) +
                       (rig.HasAnyZone
                           ? $"  Crossings need {rig.boundaryMargin:0.00} m of travel past a wall to count, " +
                             "so walking along a boundary no longer flickers it on and off.\n" +
@@ -620,6 +941,19 @@ namespace NasaSim.EditorTools
                 Debug.LogWarning("[Helmet] No pressurized areas assigned (or none of them have meshes), " +
                                  "so the helmet will only come off with the H key. Press 'Find the " +
                                  "biodome and the tunnel', or fill the rows by hand, and build again.");
+        }
+
+        /// <summary>What will actually set it off, for the build log.</summary>
+        static string DescribeTrigger(HelmetRemoval rig)
+        {
+            if (!rig.onceOnly) return DescribeZones(rig);
+            if (!rig.HasTrigger)
+                return "NO TRIGGER BOX — the helmet will only come off with H. Press 'Create the trigger " +
+                       "box' and drag it where you want the take-off";
+            Vector3 p = rig.trigger.center.position;
+            return $"Comes off ONCE, on stepping into '{rig.trigger.center.name}' at " +
+                   $"({p.x:0.0}, {p.y:0.0}, {p.z:0.0}), {rig.trigger.size.x:0.0} × " +
+                   $"{rig.trigger.size.y:0.0} × {rig.trigger.size.z:0.0} m — and never goes back on";
         }
 
         /// <summary>A one-line summary of the zones for the build log.</summary>
